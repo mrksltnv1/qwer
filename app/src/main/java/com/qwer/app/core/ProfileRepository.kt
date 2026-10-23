@@ -35,6 +35,24 @@ class ProfileRepository(
     fun failoverTarget(): VpnProfile? =
         all().firstOrNull { it.isFailoverTarget && it.protocol == Protocol.WDTT_PLUS }
 
+    /**
+     * Marks [id] as the only failover target, or clears the flag when null.
+     *
+     * Without this the release build had NO way to designate a fallback profile:
+     * `isFailoverTarget = true` was only ever set inside a `BuildConfig.DEBUG` block,
+     * so `failoverTarget()` returned null for every real user and the automatic
+     * WG/AWG -> WDTT switch could never fire. It silently reported "резервный профиль
+     * не настроен" no matter what the user imported.
+     */
+    fun setFailoverTarget(id: String?) {
+        val updated = all().map { it.copy(isFailoverTarget = it.id == id) }
+        persist(updated)
+        Diagnostics.event(
+            Event.FAILOVER_TARGET,
+            "profile" to (id ?: "none"),
+        )
+    }
+
     fun activeProfile(): VpnProfile? {
         val id = prefs.getString(KEY_ACTIVE, null) ?: return null
         return find(id)

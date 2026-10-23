@@ -34,6 +34,8 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -105,8 +107,10 @@ fun MainScreen(
     onReconnect: () -> Unit,
     onToggleAuto: (Boolean) -> Unit,
     onDelete: (VpnProfile) -> Unit,
+    onMakeFailover: (VpnProfile) -> Unit,
     onOpenImport: () -> Unit,
     onPickFile: () -> Unit,
+    onOpenLogs: () -> Unit,
     onDismissMessage: () -> Unit,
     onCheckUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -136,6 +140,7 @@ fun MainScreen(
             onCheckUpdates = onCheckUpdates,
             onOpenImport = onOpenImport,
             onPickFile = onPickFile,
+            onOpenLogs = onOpenLogs,
         )
 
         Spacer(Modifier.height(20.dp))
@@ -190,6 +195,7 @@ fun MainScreen(
             activeProfileId = activeProfileId,
             onConnect = onConnect,
             onDelete = onDelete,
+            onMakeFailover = onMakeFailover,
             onAdd = onOpenImport,
             onPickFile = onPickFile,
         )
@@ -217,6 +223,7 @@ private fun TopBar(
     onCheckUpdates: () -> Unit,
     onOpenImport: () -> Unit,
     onPickFile: () -> Unit,
+    onOpenLogs: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
 
@@ -258,6 +265,11 @@ private fun TopBar(
                     text = { Text("Проверить обновления") },
                     leadingIcon = { Icon(Icons.Filled.Refresh, null) },
                     onClick = { menuOpen = false; onCheckUpdates() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Логи") },
+                    leadingIcon = { Icon(Icons.Filled.Description, null) },
+                    onClick = { menuOpen = false; onOpenLogs() },
                 )
             }
         }
@@ -589,6 +601,7 @@ private fun ProfilesSection(
     activeProfileId: String?,
     onConnect: (VpnProfile) -> Unit,
     onDelete: (VpnProfile) -> Unit,
+    onMakeFailover: (VpnProfile) -> Unit,
     onAdd: () -> Unit,
     onPickFile: () -> Unit,
 ) {
@@ -641,6 +654,7 @@ private fun ProfilesSection(
                     isActive = profile.id == activeProfileId,
                     onClick = { onConnect(profile) },
                     onDelete = { onDelete(profile) },
+                    onMakeFailover = { onMakeFailover(profile) },
                 )
                 Spacer(Modifier.height(10.dp))
             }
@@ -654,6 +668,7 @@ private fun ProfileRow(
     isActive: Boolean,
     onClick: () -> Unit,
     onDelete: () -> Unit,
+    onMakeFailover: () -> Unit,
 ) {
     Card(
         modifier = Modifier
@@ -708,6 +723,30 @@ private fun ProfileRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                 )
+            }
+            // Only WDTT can be a failover target (failoverTarget() filters on that
+            // protocol), so the star is offered only where it can actually take effect.
+            if (profile.protocol == com.qwer.app.core.Protocol.WDTT_PLUS) {
+                IconButton(onClick = onMakeFailover) {
+                    Icon(
+                        imageVector = if (profile.isFailoverTarget) {
+                            Icons.Filled.Star
+                        } else {
+                            Icons.Outlined.StarBorder
+                        },
+                        contentDescription = if (profile.isFailoverTarget) {
+                            "Снять с резерва"
+                        } else {
+                            "Сделать резервным"
+                        },
+                        modifier = Modifier.size(20.dp),
+                        tint = if (profile.isFailoverTarget) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
             }
             IconButton(onClick = onDelete) {
                 Icon(

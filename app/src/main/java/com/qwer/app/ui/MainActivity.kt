@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
     private var message by mutableStateOf<String?>(null)
 
     private var showImportDialog by mutableStateOf(false)
+    private var showLogs by mutableStateOf(false)
     private var importText by mutableStateOf("")
     private var importError by mutableStateOf<String?>(null)
 
@@ -109,6 +110,12 @@ class MainActivity : ComponentActivity() {
             val auto by app.connectionManager.autoFailoverEnabled.collectAsStateWithLifecycle()
 
             QwerTheme {
+                if (showLogs) {
+                    LogsScreen(
+                        onClose = { showLogs = false },
+                        onClear = { Diagnostics.clear() },
+                    )
+                } else {
                 MainScreen(
                     state = state,
                     profiles = profilesState,
@@ -126,6 +133,18 @@ class MainActivity : ComponentActivity() {
                         app.repository.delete(profile.id)
                         refreshProfiles()
                     },
+                    onMakeFailover = { profile ->
+                        // Toggle: tapping the star on the current target clears it.
+                        val newTarget = if (profile.isFailoverTarget) null else profile.id
+                        app.repository.setFailoverTarget(newTarget)
+                        refreshProfiles()
+                        message = if (newTarget != null) {
+                            "Резервный профиль: ${profile.name}"
+                        } else {
+                            "Резервный профиль снят"
+                        }
+                    },
+                    onOpenLogs = { showLogs = true },
                     onOpenImport = {
                         importText = ""
                         importError = null
@@ -156,6 +175,7 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                 )
+                }
             }
         }
 

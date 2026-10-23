@@ -117,16 +117,26 @@ class UpdateChecker(
 
     companion object {
         /**
-         * "0.4.0" -> 400. Version codes must be monotonic: the manifest uses
-         * major*10000 + minor*100 + patch so a semver tag maps to a comparable int.
+         * Maps a release tag to the `versionCode` used in the manifest.
+         *
+         * The scheme is `major * 10000 + minor * 100 + patch * 10`, matching what
+         * `app/build.gradle.kts` actually ships (0.8.0 -> 800, 0.8.1 -> 810,
+         * 0.8.2 -> 820).
+         *
+         * BUG FIXED HERE: the previous formula used `+ patch` with no *10, so it
+         * computed 0.8.2 -> 802 while the APK declared 820. `802 > 820` is false, so
+         * the app would have ignored every patch release for the whole 0.8.x line —
+         * including the very update that fixes this bug. Caught by comparing the
+         * formula against the versionCode history, not by reading the code.
          */
         fun tagToVersionCode(tag: String): Int? {
-            val parts = tag.trim().split('.', '-', '+')
+            val cleaned = tag.trim().removePrefix("v").removePrefix("V")
+            val parts = cleaned.split('.', '-', '+')
             if (parts.size < 2) return null
             val major = parts.getOrNull(0)?.toIntOrNull() ?: return null
             val minor = parts.getOrNull(1)?.toIntOrNull() ?: return null
             val patch = parts.getOrNull(2)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 0
-            return major * 10_000 + minor * 100 + patch
+            return major * 10_000 + minor * 100 + patch * 10
         }
     }
 }
