@@ -10,8 +10,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.myvpn.app.MyVpnApplication
 import com.myvpn.app.BuildConfig
+import com.myvpn.app.MyVpnApplication
 import com.myvpn.app.config.ConfigImporter
 import com.myvpn.app.config.ImportResult
 import com.myvpn.app.core.ConnectionState
@@ -32,6 +32,11 @@ class MainActivity : ComponentActivity() {
 
     private var pendingProfileId by mutableStateOf<String?>(null)
     private var importMessage by mutableStateOf<String?>(null)
+
+    // Manual import dialog: the path that works right now, without a server or bot.
+    private var showImportDialog by mutableStateOf(false)
+    private var importText by mutableStateOf("")
+    private var importError by mutableStateOf<String?>(null)
 
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -74,8 +79,29 @@ class MainActivity : ComponentActivity() {
                         profiles = app.repository.all()
                         activeId = app.repository.activeProfile()?.id
                     },
-                    onImportSample = {
-                        importMessage = "Импорт доступен по ссылке из Telegram: myvpn://import?token=…"
+                    onOpenImport = {
+                        importText = ""
+                        importError = null
+                        showImportDialog = true
+                    },
+                    showImportDialog = showImportDialog,
+                    importText = importText,
+                    importError = importError,
+                    onImportTextChange = {
+                        importText = it
+                        importError = null
+                    },
+                    onDismissImport = { showImportDialog = false },
+                    onConfirmImport = {
+                        val outcome = saveProfileFromText(importText, namePrefix = null)
+                        if (outcome == null) {
+                            showImportDialog = false
+                            importText = ""
+                            profiles = app.repository.all()
+                            activeId = app.repository.activeProfile()?.id
+                        } else {
+                            importError = outcome
+                        }
                     },
                 )
             }
@@ -100,7 +126,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        // DEBUG-ONLY test hook: lets automated tests push a config through `am start`.
+        // DEBUG-ONLY test hooks: let automated tests push a config through `am start`.
         // Compiled out of release builds because BuildConfig.DEBUG is a compile-time const.
         if (BuildConfig.DEBUG) {
             if (intent?.getBooleanExtra("debug_wdtt_profile", false) == true) {
@@ -131,7 +157,7 @@ class MainActivity : ComponentActivity() {
                     debugConfig
                 }
                 if (decoded != null) {
-                    importDebugConfig(decoded)
+                    saveProfileFromText(decoded, namePrefix = "Test ")
                     return
                 }
             }
@@ -151,27 +177,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Debug-only: validates and stores a config supplied via intent extra. */
-    private fun importDebugConfig(raw: String) {
+    /**
+     * Validates raw config text and stores it.
+     *
+     * @return null on success, or a user-facing error message to show inline.
+     */
+    private fun saveProfileFromText(raw: String, namePrefix: String?): String? =
         when (val result = ConfigImporter.validate(raw)) {
             is ImportResult.Valid -> {
-                val name = "Test ${result.protocol.shortName()}"
+                val baseName = "${result.protocol.shortName()} · ${result.endpoint ?: "профиль"}"
                 val profile = VpnProfile(
-                    name = name,
+                    name = (namePrefix ?: "") + baseName,
                     protocol = result.protocol,
                     endpointSummary = result.endpoint,
                 )
                 app.repository.save(profile, raw)
                 app.repository.setActive(profile.id)
-                importMessage = "Тестовый профиль добавлен: $name"
-                Diagnostics.event(Event.PROFILE_IMPORTED, "debug" to true, "protocol" to result.protocol)
+                importMessage = "Профиль добавлен: ${profile.name}"
+                Diagnostics.event(
+                    Event.PROFILE_IMPORTED,
+                    "protocol" to result.protocol,
+                    "peers" to result.peerCount,
+                )
+                null
             }
             is ImportResult.Invalid -> {
-                importMessage = "Конфиг отклонён: ${result.reason}"
-                Diagnostics.event(Event.PROFILE_IMPORT_REJECTED, "debug" to true)
+                Diagnostics.event(Event.PROFILE_IMPORT_REJECTED, "stage" to "validate")
+                result.reason
             }
         }
-    }
 }
 
 /** Small helper so the UI has no dependency on the engine's protocol enum ordering. */

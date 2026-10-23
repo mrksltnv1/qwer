@@ -1,8 +1,22 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
+
+// Signing material is read from keystore.properties, which is gitignored and never
+// committed. When the file is absent (e.g. a fresh clone without a key) the release
+// build falls back to unsigned, so the project still builds for contributors.
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.inputStream().use { load(it) }
+    }
+}
+val hasKeystore = keystorePropsFile.exists() &&
+    keystoreProps.getProperty("storeFile") != null
 
 android {
     namespace = "com.myvpn.app"
@@ -12,13 +26,30 @@ android {
         applicationId = "com.myvpn.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // Domain used for verified App Links. Empty by default (custom scheme only).
         buildConfigField("String", "APP_LINK_HOST", "\"\"")
+    }
+
+    signingConfigs {
+        create("release") {
+            if (hasKeystore) {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+            // All three schemes on purpose: some OEM installers (realme/OPPO, Xiaomi)
+            // reject packages that lack v1, and Play requires v2+. Having v1+v2+v3
+            // means every installer path is happy.
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
     }
 
     buildFeatures {
@@ -38,6 +69,10 @@ android {
 
     buildTypes {
         release {
+            if (hasKeystore) signingConfig = signingConfigs.getByName("release")
+            // debuggable=true is a common install blocker on OEM ROMs, so the release
+            // build must explicitly clear it.
+            isDebuggable = false
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
@@ -46,9 +81,14 @@ android {
         }
     }
 
+    // A single universal APK: realme GT 6 is arm64-v8a, but shipping all ABIs keeps
+    // one download working on any device the user hands us.
     packaging {
         resources {
             excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
+        }
+        jniLibs {
+            useLegacyPackaging = false
         }
     }
 

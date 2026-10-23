@@ -20,9 +20,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -74,7 +76,13 @@ fun MainScreen(
     onReconnect: () -> Unit,
     onToggleAuto: (Boolean) -> Unit,
     onDelete: (VpnProfile) -> Unit,
-    onImportSample: () -> Unit,
+    onOpenImport: () -> Unit,
+    showImportDialog: Boolean,
+    importText: String,
+    importError: String?,
+    onImportTextChange: (String) -> Unit,
+    onDismissImport: () -> Unit,
+    onConfirmImport: () -> Unit,
 ) {
     val scroll = rememberScrollState()
     Column(
@@ -162,9 +170,80 @@ fun MainScreen(
             activeProfileId = activeProfileId,
             onConnect = onConnect,
             onDelete = onDelete,
-            onImportSample = onImportSample,
+            onImport = onOpenImport,
         )
     }
+
+    if (showImportDialog) {
+        ImportDialog(
+            text = importText,
+            error = importError,
+            onTextChange = onImportTextChange,
+            onDismiss = onDismissImport,
+            onConfirm = onConfirmImport,
+        )
+    }
+}
+
+/**
+ * Paste-a-config dialog: the manual path for a user who already has a `.conf` file or
+ * a config from a bot. No server, no deep link, no account — this is what makes the
+ * app usable on a phone right now.
+ */
+@Composable
+private fun ImportDialog(
+    text: String,
+    error: String?,
+    onTextChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Добавить конфигурацию") },
+        text = {
+            Column {
+                Text(
+                    text = "Вставьте конфиг WireGuard или AmneziaWG целиком — начиная с [Interface].",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = onTextChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp),
+                    placeholder = { Text("[Interface]\nPrivateKey = …") },
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    singleLine = false,
+                )
+                if (error != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Ключи остаются только на этом устройстве, в защищённом хранилище Android.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = text.isNotBlank()) {
+                Text("Импортировать")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+        },
+    )
 }
 
 @Composable
@@ -288,7 +367,7 @@ private fun ProfileSection(
     activeProfileId: String?,
     onConnect: (VpnProfile) -> Unit,
     onDelete: (VpnProfile) -> Unit,
-    onImportSample: () -> Unit,
+    onImport: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
         Row(
@@ -297,7 +376,7 @@ private fun ProfileSection(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Конфигурации", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            TextButton(onClick = onImportSample) { Text("Импорт") }
+            TextButton(onClick = onImport) { Text("Добавить") }
         }
         Spacer(Modifier.height(8.dp))
 
@@ -308,7 +387,7 @@ private fun ProfileSection(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             ) {
                 Text(
-                    text = "Пока пусто. Откройте ссылку из Telegram-бота — профиль появится здесь.",
+                    text = "Пока пусто. Нажмите «Добавить» и вставьте конфиг WireGuard или AmneziaWG.",
                     modifier = Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
