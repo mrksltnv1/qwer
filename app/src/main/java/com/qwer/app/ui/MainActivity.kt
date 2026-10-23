@@ -203,13 +203,29 @@ class MainActivity : ComponentActivity() {
 
     private fun installUpdate() {
         val ready = updateState as? UpdateUiState.ReadyToInstall ?: return
-        val res = updateInstaller.install(ready.file)
-        if (res.isSuccess) {
-            updateState = UpdateUiState.Idle
-        } else {
-            updateState = UpdateUiState.Failed(
-                "Не удалось открыть установщик. Разрешите установку из неизвестных источников."
-            )
+        when (val res = updateInstaller.install(ready.file)) {
+            UpdateInstaller.InstallResult.Started -> {
+                // Leave the card visible: the user may come back after cancelling.
+                updateState = UpdateUiState.ReadyToInstall(ready.file)
+            }
+            UpdateInstaller.InstallResult.NeedUnknownSourcesPermission -> {
+                // The engine rejected the launch because this app is not allowed to
+                // install packages. Send the user straight to the right settings page
+                // instead of leaving them with a dead button.
+                val opened = updateInstaller.openUnknownSourcesSettings()
+                updateState = UpdateUiState.Failed(
+                    if (opened) {
+                        "Разрешите qwer установку приложений в открывшихся настройках, " +
+                            "затем вернитесь и нажмите «Установить» снова."
+                    } else {
+                        "Нужно разрешение на установку. Откройте Настройки → Безопасность → " +
+                            "Установка неизвестных приложений → qwer."
+                    }
+                )
+            }
+            is UpdateInstaller.InstallResult.Failed -> {
+                updateState = UpdateUiState.Failed(res.message)
+            }
         }
     }
 
