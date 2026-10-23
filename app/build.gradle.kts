@@ -24,10 +24,10 @@ android {
 
     defaultConfig {
         applicationId = "com.qwer.app"
-        minSdk = 26
-        targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.1"
+        minSdk = 24
+        targetSdk = 34
+        versionCode = 6
+        versionName = "0.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -81,18 +81,6 @@ android {
         }
     }
 
-    // Per-ABI splits: the universal APK is ~30 MB, which is painful to download on a
-    // slow or filtered link and a truncated download shows up as "App not installed".
-    // realme GT 6 is arm64-v8a, so a ~10 MB split is both faster and safer to transfer.
-    splits {
-        abi {
-            isEnable = true
-            reset()
-            include("arm64-v8a", "armeabi-v7a")
-            isUniversalApk = true
-        }
-    }
-
     // A single universal APK: realme GT 6 is arm64-v8a, but shipping all ABIs keeps
     // one download working on any device the user hands us.
     packaging {
@@ -100,7 +88,10 @@ android {
             excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
         }
         jniLibs {
-            useLegacyPackaging = false
+            // extractNativeLibs=true: the most compatible layout. Some OEM installers
+            // (realme/OPPO ColorOS, MIUI) fail silently on APKs that keep .so files
+            // uncompressed and expect the loader to map them from the APK.
+            useLegacyPackaging = true
         }
     }
 
