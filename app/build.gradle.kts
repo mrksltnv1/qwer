@@ -26,10 +26,18 @@ android {
         applicationId = "com.qwer.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 800
-        versionName = "0.8.0"
+        versionCode = 810
+        versionName = "0.8.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Build a single-ABI APK with: ./gradlew :app:assembleRelease -PabiFilter=arm64-v8a
+        // Needed because hand-repacking a finished APK (removing lib/<abi> from the zip)
+        // produces an unaligned package with a compressed resources.arsc, which Android
+        // refuses to install. Gradle must do the packaging.
+        (project.findProperty("abiFilter") as String?)?.let { abis ->
+            ndk { abiFilters += abis.split(",").map { it.trim() } }
+        }
 
         // Domain used for verified App Links. Empty by default (custom scheme only).
         buildConfigField("String", "APP_LINK_HOST", "\"\"")
