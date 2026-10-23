@@ -72,6 +72,11 @@ class ConnectionManager(
     /** Non-null only while an embedded WDTT client is running. */
     private var wdttClient: WdttClient? = null
 
+    // Probe logging state. The monitor ticks every ~2.5 s, which is far too often to
+    // write a log line per result.
+    private var lastProbeOk: Boolean? = null
+    private var lastProbeLogAt: Long = 0L
+
     /** Non-null when the OS still needs the user's one-time VPN consent. */
     fun vpnPermissionIntent(): Intent? = VpnService.prepare(context)
 
@@ -323,7 +328,16 @@ class ConnectionManager(
                 val now = clock()
 
                 if (!ok) consecutive++ else consecutive = 0
-                Diagnostics.event(Event.PROBE_RESULT, "ok" to ok, "fails" to consecutive)
+                // A line every probe interval (~2.5 s) filled the whole 500-line buffer
+                // with "ok=true" and pushed out the events that actually matter.
+                // Log transitions and failures only, plus one heartbeat per minute so
+                // the log still proves the monitor is alive.
+                val transitioned = lastProbeOk != ok
+                if (transitioned || !ok || now - lastProbeLogAt >= PROBE_HEARTBEAT_MS) {
+                    Diagnostics.event(Event.PROBE_RESULT, "ok" to ok, "fails" to consecutive)
+                    lastProbeLogAt = now
+                }
+                lastProbeOk = ok
 
                 if (ok) {
                     val current = _state.value
@@ -469,5 +483,8 @@ class ConnectionManager(
 
     private companion object {
         const val TUNNEL_NAME = "qwer0"
+
+        /** One "still alive" log line per minute at most. */
+        const val PROBE_HEARTBEAT_MS = 60_000L
     }
 }

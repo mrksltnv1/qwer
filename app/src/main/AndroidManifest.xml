@@ -73,5 +73,24 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!--
+          Quick Settings tile: one tap connects/disconnects the last used profile.
+          BIND_QUICK_SETTINGS_TILE + exported=false is the required contract; without
+          the permission the system refuses to bind and the tile never appears.
+        -->
+        <service
+            android:name=".service.VpnTileService"
+            android:exported="false"
+            android:icon="@drawable/ic_tile_vpn"
+            android:label="qwer"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
     </application>
 </manifest>

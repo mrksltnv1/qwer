@@ -7,9 +7,14 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.qwer.app.BuildConfig
@@ -43,7 +48,7 @@ class MainActivity : ComponentActivity() {
     private var message by mutableStateOf<String?>(null)
 
     private var showImportDialog by mutableStateOf(false)
-    private var showLogs by mutableStateOf(false)
+    private var tab by mutableStateOf(AppTab.HOME)
     private var importText by mutableStateOf("")
     private var importError by mutableStateOf<String?>(null)
 
@@ -110,13 +115,16 @@ class MainActivity : ComponentActivity() {
             val auto by app.connectionManager.autoFailoverEnabled.collectAsStateWithLifecycle()
 
             QwerTheme {
-                if (showLogs) {
-                    LogsScreen(
-                        onClose = { showLogs = false },
+                Scaffold(
+                    bottomBar = { AppBottomBar(selected = tab, onSelect = { tab = it }) },
+                ) { innerPadding ->
+                Box(Modifier.padding(innerPadding)) {
+                when (tab) {
+                    AppTab.LOGS -> LogsScreen(
+                        onClose = { tab = AppTab.HOME },
                         onClear = { Diagnostics.clear() },
                     )
-                } else {
-                MainScreen(
+                    AppTab.HOME -> MainScreen(
                     state = state,
                     profiles = profilesState,
                     activeProfileId = activeIdState,
@@ -144,7 +152,7 @@ class MainActivity : ComponentActivity() {
                             "Резервный профиль снят"
                         }
                     },
-                    onOpenLogs = { showLogs = true },
+                    onOpenLogs = { tab = AppTab.LOGS },
                     onOpenImport = {
                         importText = ""
                         importError = null
@@ -175,6 +183,8 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                 )
+                }
+                }
                 }
             }
         }

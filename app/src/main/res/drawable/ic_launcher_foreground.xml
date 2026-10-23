@@ -1,9 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Launcher icon foreground.
+
+  A shield with a keyhole: reads as "protected connection" at 48 dp and still holds
+  up when Android masks it to a circle or squircle. Content stays inside the 72x72
+  safe area (18..90 of the 108 viewport) so no OEM mask can clip it.
+
+  Single flat colour on purpose: the adaptive background carries the depth, and a
+  flat mark survives the monochrome-theme treatment on Android 13+.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp" android:height="108dp"
-    android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#1F6FEB"
-        android:pathData="M54,26 L78,54 L54,82 L30,54 Z" />
-    <path android:fillColor="#6FD79B"
-        android:pathData="M54,40 L66,54 L54,68 L42,54 Z" />
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Shield body -->
+    <path
+        android:fillColor="#3D5AFE"
+        android:pathData="M54,22 L79,31.5 L79,52 C79,68.5 68.5,80.5 54,86 C39.5,80.5 29,68.5 29,52 L29,31.5 Z" />
+
+    <!-- Shield rim, slightly lighter for edge definition on dark backgrounds -->
+    <path
+        android:fillColor="#8C9EFF"
+        android:pathData="M54,22 L79,31.5 L79,52 C79,68.5 68.5,80.5 54,86 C39.5,80.5 29,68.5 29,52 L29,31.5 Z
+                          M54,27.5 L34,35 L34,52 C34,65.5 42.5,75.5 54,80.4 C65.5,75.5 74,65.5 74,52 L74,35 Z"
+        android:fillType="evenOdd" />
+
+    <!-- Keyhole: circle + stem -->
+    <path
+        android:fillColor="#0D0F14"
+        android:pathData="M54,42 m-6.5,0 a6.5,6.5 0 1,0 13,0 a6.5,6.5 0 1,0 -13,0 Z" />
+    <path
+        android:fillColor="#0D0F14"
+        android:pathData="M51,46 L57,46 L59,63 L49,63 Z" />
 </vector>

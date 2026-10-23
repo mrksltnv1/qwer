@@ -47,6 +47,7 @@ object Diagnostics {
         DEEPLINK_RECEIVED,
         DEEPLINK_REJECTED,
         VPN_PERMISSION,
+        TILE_ACTION,
     }
 
     fun event(event: Event, vararg fields: Pair<String, Any?>) {

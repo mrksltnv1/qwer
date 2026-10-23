@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Solid colour as a real DRAWABLE, not a @color reference: getDrawable() on a
-     color resource throws NotFoundException and breaks install-time icon preview. -->
+<!--
+  Adaptive icon background.
+
+  A real DRAWABLE, not a @color reference: getDrawable() on a colour resource throws
+  NotFoundException and breaks the install-time icon preview (this caused a silent
+  install failure earlier in the project).
+-->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="#101215" />
+    <gradient
+        android:type="linear"
+        android:angle="315"
+        android:startColor="#151A33"
+        android:endColor="#0A0C12" />
 </shape>
