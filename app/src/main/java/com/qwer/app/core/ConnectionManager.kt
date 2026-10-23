@@ -15,6 +15,9 @@ import com.qwer.app.failover.FailoverDecision
 import com.qwer.app.failover.HealthSample
 import com.qwer.app.health.ConnectivityProbe
 import com.qwer.app.health.TcpProbe
+import com.qwer.app.wdtt.WdttClient
+import com.qwer.app.wdtt.WdttLink
+import com.qwer.app.wdtt.WdttParseResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -66,6 +69,9 @@ class ConnectionManager(
     private var activeProfile: VpnProfile? = null
     private val failover = FailoverController(failoverConfig)
 
+    /** Non-null only while an embedded WDTT client is running. */
+    private var wdttClient: WdttClient? = null
+
     /** Non-null when the OS still needs the user's one-time VPN consent. */
     fun vpnPermissionIntent(): Intent? = VpnService.prepare(context)
 
@@ -110,9 +116,11 @@ class ConnectionManager(
             return@withLock
         }
 
-        // WDTT is not an embeddable engine; it is a handover (see WdttPlusAdapter).
+        // WDTT is embedded now: its native client publishes a plain WireGuard config
+        // pointing at 127.0.0.1, which our existing engine then hosts. No second
+        // VpnService, no handover to another app.
         if (profile.protocol == Protocol.WDTT_PLUS) {
-            handOverToWdtt(profile)
+            connectWdttLocked(profile, raw)
             return@withLock
         }
 
@@ -156,32 +164,84 @@ class ConnectionManager(
         }
     }
 
-    private fun handOverToWdtt(profile: VpnProfile) {
-        val handedOver = wdtt.handover().isSuccess
-        if (handedOver) {
-            // Honest state: we are not connected, the other app owns the tunnel now.
-            _state.value = ConnectionState.Failed(
-                FailureReason.WDTT_HANDOVER_REQUIRED,
-                "Открыт WDTT Plus. Подключение выполняйте в нём — два VPN одновременно Android не разрешает.",
-            )
-            activeProfile = profile
-            repository.setActive(profile.id)
+    private suspend fun stopTunnelLocked(reason: String) = withLockStop(reason)
+
+    /**
+     * Starts an embedded WDTT tunnel.
+     *
+     * The stored "config" for a WDTT profile is the `wdtt://` link itself. We hand it to
+     * [WdttClient], which spawns the native client with secrets on stdin, waits for the
+     * WireGuard config it publishes on stdout, and returns it. That config targets
+     * 127.0.0.1:<local>; we then bring it up with the same engine used for WG/AWG.
+     */
+    private suspend fun connectWdttLocked(profile: VpnProfile, link: String) {
+        val parsed = when (val r = WdttLink.parse(link)) {
+            is WdttParseResult.Valid -> r.link
+            is WdttParseResult.Invalid -> {
+                Diagnostics.warn(Event.WDTT_ENGINE, null, "stage" to "parse")
+                _state.value = ConnectionState.Failed(FailureReason.IMPORT_FAILED, r.reason)
+                return
+            }
+        }
+
+        if (engine?.isUp() == true) stopTunnelLocked("before-start")
+
+        _state.value = ConnectionState.Connecting
+        val client = wdttClient ?: WdttClient(context).also { wdttClient = it }
+
+        val config = when (val res = client.start(parsed)) {
+            is WdttClient.StartResult.Ready -> res.config
+            is WdttClient.StartResult.Failed -> {
+                Diagnostics.warn(Event.WDTT_ENGINE, null, "stage" to "start")
+                _state.value = ConnectionState.Failed(FailureReason.WDTT_UNAVAILABLE, res.reason)
+                return
+            }
+        }
+
+        // The published config is a normal WireGuard config, so the very same engine
+        // that serves WG/AWG hosts it. One tunnel, one VpnService, one code path.
+        val started = withContext(Dispatchers.IO) {
+            runCatching {
+                val eng = engine ?: engineFactory(context).also { engine = it }
+                eng.up(config, tunnelName = TUNNEL_NAME)
+            }
+        }
+        started.exceptionOrNull()?.let { err ->
+            Diagnostics.warn(Event.TUNNEL_START_FAILED, err, "protocol" to profile.protocol)
+            withContext(Dispatchers.IO) { runCatching { client.stop() } }
+            wdttClient = null
+            _state.value = ConnectionState.Failed(FailureReason.ENGINE_ERROR, humanEngineError(err))
+            return
+        }
+
+        activeProfile = profile
+        repository.setActive(profile.id)
+        Diagnostics.event(Event.WDTT_ENGINE, "stage" to "tunnel_up", "peer" to parsed.safeLabel())
+
+        _state.value = ConnectionState.Verifying
+        val ok = withContext(Dispatchers.IO) { probe.probe() }
+        val now = clock()
+        if (ok) {
+            failover.onConnected(now)
+            _state.value = ConnectionState.Connected(profile.protocol, now, now)
+            startMonitor(profile)
         } else {
-            _state.value = ConnectionState.Failed(
-                FailureReason.WDTT_UNAVAILABLE,
-                "WDTT Plus не установлен на устройстве",
-            )
+            Diagnostics.warn(Event.PROBE_RESULT, null, "initial" to "failed")
+            _state.value = ConnectionState.Degraded(profile.protocol, now, 1)
+            startMonitor(profile)
         }
     }
-
-    private suspend fun stopTunnelLocked(reason: String) = withLockStop(reason)
 
     private suspend fun withLockStop(reason: String) {
         monitorJob?.cancel()
         monitorJob = null
-        val had = engine != null
+        val had = engine != null || wdttClient != null
         withContext(Dispatchers.IO) { runCatching { engine?.down() } }
         engine = null
+        // Kill the native client too, otherwise it keeps its local WireGuard port and
+        // the next start would collide with a zombie.
+        withContext(Dispatchers.IO) { runCatching { wdttClient?.stop() } }
+        wdttClient = null
         failover.onDisconnected()
         activeProfile = null
         repository.setActive(null)
@@ -277,22 +337,27 @@ class ConnectionManager(
             )
             return
         }
-        // Stop first: Android permits a single active VpnService.
+
+        // Stop the current tunnel first: Android permits a single active VpnService,
+        // and the WDTT client needs its local WireGuard port free.
         withContext(Dispatchers.IO) { runCatching { engine?.down() } }
         engine = null
+        withContext(Dispatchers.IO) { runCatching { wdttClient?.stop() } }
+        wdttClient = null
         failover.onDisconnected()
+        activeProfile = null
+        repository.setActive(null)
 
-        if (wdtt.handover().isSuccess) {
-            _state.value = ConnectionState.Failed(
-                FailureReason.WDTT_HANDOVER_REQUIRED,
-                "Основной туннель остановлен. Открыт WDTT Plus — подключитесь в нём.",
-            )
-        } else {
+        // Embedded switch: bring WDTT up through the same engine as any other config.
+        val wdttConfig = repository.configFor(target.id)
+        if (wdttConfig == null) {
             _state.value = ConnectionState.Failed(
                 FailureReason.WDTT_UNAVAILABLE,
-                "WDTT Plus не установлен: переключение невозможно",
+                "Секрет резервного WDTT-профиля недоступен",
             )
+            return
         }
+        connectWdttLocked(target, wdttConfig)
     }
 
     private fun hasPhysicalNetwork(): Boolean {

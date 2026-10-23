@@ -26,6 +26,8 @@ import com.qwer.app.update.UpdateChecker
 import com.qwer.app.update.UpdateInstaller
 import com.qwer.app.update.UpdateResult
 import com.qwer.app.update.UpdateUiState
+import com.qwer.app.wdtt.WdttLink
+import com.qwer.app.wdtt.WdttParseResult
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -248,11 +250,38 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Validates raw config text and stores it.
+     * Validates raw text and stores it.
+     *
+     * Two shapes are accepted:
+     *  - a WireGuard/AmneziaWG config (starts with [Interface])
+     *  - a `wdtt://connect?...` link, stored verbatim as the profile "config"; the
+     *    WDTT client consumes it at connect time and publishes a WG config itself.
+     *
      * @return null on success, or a user-facing error to show inline.
      */
-    private fun saveProfileFromText(raw: String, namePrefix: String?): String? =
-        when (val result = ConfigImporter.validate(raw)) {
+    private fun saveProfileFromText(raw: String, namePrefix: String?): String? {
+        if (raw.trim().startsWith("wdtt://", ignoreCase = true)) {
+            return when (val parsed = WdttLink.parse(raw)) {
+                is WdttParseResult.Valid -> {
+                    val profile = VpnProfile(
+                        name = (namePrefix ?: "") + "WDTT · ${parsed.link.safeLabel()}",
+                        protocol = Protocol.WDTT_PLUS,
+                        endpointSummary = parsed.link.safeLabel(),
+                    )
+                    app.repository.save(profile, raw)
+                    app.repository.setActive(profile.id)
+                    message = "Профиль добавлен: ${profile.name}"
+                    Diagnostics.event(Event.PROFILE_IMPORTED, "protocol" to Protocol.WDTT_PLUS)
+                    null
+                }
+                is WdttParseResult.Invalid -> {
+                    Diagnostics.event(Event.PROFILE_IMPORT_REJECTED, "stage" to "wdtt_parse")
+                    parsed.reason
+                }
+            }
+        }
+
+        return when (val result = ConfigImporter.validate(raw)) {
             is ImportResult.Valid -> {
                 val baseName = "${result.protocol.shortName()} · ${result.endpoint ?: "профиль"}"
                 val profile = VpnProfile(
@@ -275,6 +304,7 @@ class MainActivity : ComponentActivity() {
                 result.reason
             }
         }
+    }
 
     // ---------------------------------------------------------------- intents
 

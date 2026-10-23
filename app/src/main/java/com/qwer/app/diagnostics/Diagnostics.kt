@@ -27,6 +27,7 @@ object Diagnostics {
         FAILOVER_SUPPRESSED,
         FAILOVER_EXHAUSTED,
         WDTT_HANDOVER,
+        WDTT_ENGINE,
         DEEPLINK_RECEIVED,
         DEEPLINK_REJECTED,
         VPN_PERMISSION,
