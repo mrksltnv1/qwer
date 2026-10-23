@@ -303,14 +303,40 @@ class ConnectionManager(
     }
 
     private fun humanEngineError(err: Throwable): String {
+        // The AmneziaWG engine throws BackendException with a machine-readable Reason.
+        // Showing only "engine error" is useless for support, so map every reason to a
+        // concrete, actionable sentence. Reflection is avoided: the engine AAR is a
+        // compile-time dependency, so we can reference the type directly.
+        val reason = runCatching {
+            (err as? org.amnezia.awg.backend.BackendException)?.reason?.name
+        }.getOrNull()
+
+        val byReason = when (reason) {
+            "VPN_NOT_AUTHORIZED" -> "Нет разрешения Android на VPN"
+            "TUNNEL_MISSING_CONFIG" -> "Конфигурация не найдена"
+            "UNABLE_TO_START_VPN" -> "Не удалось поднять VPN-сервис"
+            "TUN_CREATION_ERROR" -> "Не удалось создать сетевой интерфейс"
+            "DNS_RESOLUTION_FAILURE" -> "Не удалось разрешить адрес сервера"
+            "GO_ACTIVATION_ERROR_CODE" -> {
+                val code = runCatching {
+                    (err as org.amnezia.awg.backend.BackendException).format.firstOrNull()?.toString()
+                }.getOrNull()
+                "Движок отказал при запуске (код $code)"
+            }
+            "AWG_QUICK_CONFIG_ERROR_CODE" -> "awg-quick не принял конфигурацию"
+            "UNKNOWN_KERNEL_MODULE_NAME" -> "Ядро не поддерживает AmneziaWG"
+            else -> null
+        }
+        if (byReason != null) return byReason
+
         val msg = err.message.orEmpty()
         return when {
             msg.contains("VPN_NOT_AUTHORIZED", ignoreCase = true) ->
                 "Нет разрешения Android на VPN"
-            msg.contains("BadConfig", ignoreCase = true) ->
-                "Конфигурация отклонена движком"
-            msg.contains("TUNNEL_MISSING_CONFIG", ignoreCase = true) ->
-                "Конфигурация не найдена"
+            msg.contains("BadConfig", ignoreCase = true) ||
+                msg.contains("Bad configuration", ignoreCase = true) ->
+                "Движок отклонил конфигурацию: ${msg.take(120)}"
+            msg.isNotBlank() -> "Не удалось запустить туннель: ${msg.take(120)}"
             else -> "Не удалось запустить туннель"
         }
     }

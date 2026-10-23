@@ -16,6 +16,7 @@ object Diagnostics {
     /** Events are intentionally coarse — enough to debug, not enough to profile a user. */
     enum class Event {
         APP_START,
+        APP_UPDATE,
         PROFILE_IMPORTED,
         PROFILE_IMPORT_REJECTED,
         TUNNEL_START,

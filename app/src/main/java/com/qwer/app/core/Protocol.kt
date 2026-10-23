@@ -18,19 +18,47 @@ enum class Protocol(val displayName: String) {
 
     companion object {
         /**
-         * Classifies an imported config as WireGuard or AmneziaWG by looking for the
-         * AmneziaWG-only obfuscation keys in the [Interface] section.
+         * AmneziaWG-only obfuscation keys. Any of these in the [Interface] section
+         * means the profile must be driven as AWG (they are meaningless for plain WG).
+         */
+        private val AWG_KEYS = setOf(
+            "jc", "jmin", "jmax",
+            "s1", "s2", "s3", "s4",
+            "h1", "h2", "h3", "h4",
+            "i1", "i2", "i3", "i4", "i5",
+            "headerprotectionkey", "contentpaddingaddition",
+        )
+
+        /**
+         * Classifies an imported config as WireGuard or AmneziaWG.
+         *
+         * BUG FIXED HERE: the previous version searched for the literal strings
+         * "jc =", "s1 =", … which required a space before `=`. Real-world configs
+         * (and every generator I could find) also emit `Jc=4` without spaces, so
+         * those profiles were silently treated as plain WireGuard. The engine then
+         * parsed them WITHOUT obfuscation, connected to an AWG server that expects
+         * it, and the handshake never completed — which is exactly the reported
+         * "AmneziaWG does not work".
+         *
+         * Parsing is now whitespace- and case-insensitive: split on the first '='
+         * and compare the trimmed lowercase key.
          */
         fun classifyConfig(rawConfig: String): Protocol {
-            val interfaceSection = rawConfig
-                .lineSequence()
-                .dropWhile { it.trim() != "[Interface]" }
-                .takeWhile { it.trim() != "[Peer]" }
-                .joinToString("\n")
-                .lowercase()
-            val awgKeys = listOf("jc =", "jmin =", "jmax =", "s1 =", "s2 =",
-                "h1 =", "h2 =", "h3 =", "h4 =", "i1 =", "i2 =")
-            return if (awgKeys.any { interfaceSection.contains(it) }) AMNEZIAWG else WIREGUARD
+            var inInterface = false
+            for (rawLine in rawConfig.lineSequence()) {
+                val line = rawLine.trim()
+                if (line.isEmpty() || line.startsWith("#")) continue
+                if (line.startsWith("[")) {
+                    inInterface = line.equals("[Interface]", ignoreCase = true)
+                    continue
+                }
+                if (!inInterface) continue
+                val eq = line.indexOf('=')
+                if (eq <= 0) continue
+                val key = line.substring(0, eq).trim().lowercase()
+                if (key in AWG_KEYS) return AMNEZIAWG
+            }
+            return WIREGUARD
         }
     }
 }

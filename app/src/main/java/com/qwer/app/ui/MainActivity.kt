@@ -2,6 +2,7 @@ package com.qwer.app.ui
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -10,20 +11,26 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import com.qwer.app.BuildConfig
 import com.qwer.app.QwerApplication
 import com.qwer.app.config.ConfigImporter
+import com.qwer.app.config.FileConfigReader
 import com.qwer.app.config.ImportResult
-import com.qwer.app.core.ConnectionState
 import com.qwer.app.core.Protocol
 import com.qwer.app.core.VpnProfile
 import com.qwer.app.deeplink.DeepLinkHandler
 import com.qwer.app.diagnostics.Diagnostics
 import com.qwer.app.diagnostics.Diagnostics.Event
+import com.qwer.app.update.UpdateChecker
+import com.qwer.app.update.UpdateInstaller
+import com.qwer.app.update.UpdateResult
+import com.qwer.app.update.UpdateUiState
+import kotlinx.coroutines.launch
+import java.io.File
 
 /**
- * Single screen. Deliberately holds no tunnel logic: it renders [ConnectionState] and
- * forwards user intents to [com.qwer.app.core.ConnectionManager].
+ * Single screen host. Holds no tunnel logic: it renders state and forwards intents.
  */
 class MainActivity : ComponentActivity() {
 
@@ -31,12 +38,18 @@ class MainActivity : ComponentActivity() {
         get() = application as QwerApplication
 
     private var pendingProfileId by mutableStateOf<String?>(null)
-    private var importMessage by mutableStateOf<String?>(null)
+    private var message by mutableStateOf<String?>(null)
 
-    // Manual import dialog: the path that works right now, without a server or bot.
     private var showImportDialog by mutableStateOf(false)
     private var importText by mutableStateOf("")
     private var importError by mutableStateOf<String?>(null)
+
+    private var updateState by mutableStateOf<UpdateUiState>(UpdateUiState.Idle)
+    private var profilesState by mutableStateOf<List<VpnProfile>>(emptyList())
+    private var activeIdState by mutableStateOf<String?>(null)
+
+    private lateinit var updateChecker: UpdateChecker
+    private lateinit var updateInstaller: UpdateInstaller
 
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -48,42 +61,80 @@ class MainActivity : ComponentActivity() {
         if (granted && id != null) {
             app.connectionManager.connect(id)
         } else if (!granted) {
-            importMessage = "Без разрешения Android VPN подключение невозможно"
+            message = "Без разрешения Android VPN подключение невозможно"
+        }
+    }
+
+    /** SAF picker for a .conf file. */
+    private val pickConfigFile = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@registerForActivityResult
+        lifecycleScope.launch {
+            when (val res = FileConfigReader.read(this@MainActivity, uri)) {
+                is FileConfigReader.Result.Ok -> {
+                    val error = saveProfileFromText(res.text, namePrefix = null)
+                    if (error == null) {
+                        showImportDialog = false
+                        importText = ""
+                        refreshProfiles()
+                        message = "Импортировано из файла: ${res.displayName}"
+                    } else {
+                        // Keep the dialog open with the error so the user can fix it.
+                        importText = res.text
+                        importError = error
+                        showImportDialog = true
+                    }
+                }
+                is FileConfigReader.Result.Error -> {
+                    message = res.message
+                }
+            }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        updateChecker = UpdateChecker(currentVersionCode = BuildConfig.VERSION_CODE)
+        updateInstaller = UpdateInstaller(this)
+        refreshProfiles()
+
         handleIntent(intent)
 
         setContent {
             val state by app.connectionManager.state.collectAsStateWithLifecycle()
             val auto by app.connectionManager.autoFailoverEnabled.collectAsStateWithLifecycle()
-            var profiles by mutableStateOf(app.repository.all())
-            var activeId by mutableStateOf(app.repository.activeProfile()?.id)
 
             QwerTheme {
                 MainScreen(
                     state = state,
-                    profiles = profiles,
-                    activeProfileId = activeId,
+                    profiles = profilesState,
+                    activeProfileId = activeIdState,
                     autoFailover = auto,
-                    message = importMessage,
+                    message = message,
                     wdttInstalled = app.wdtt.availability().installed,
+                    updateState = updateState,
+                    appVersion = BuildConfig.VERSION_NAME,
                     onConnect = { profile -> requestConnect(profile) },
                     onDisconnect = { app.connectionManager.disconnect() },
                     onReconnect = { app.connectionManager.reconnect() },
                     onToggleAuto = { app.connectionManager.setAutoFailover(it) },
                     onDelete = { profile ->
                         app.repository.delete(profile.id)
-                        profiles = app.repository.all()
-                        activeId = app.repository.activeProfile()?.id
+                        refreshProfiles()
                     },
                     onOpenImport = {
                         importText = ""
                         importError = null
                         showImportDialog = true
                     },
+                    onPickFile = { pickConfigFile.launch(arrayOf("application/octet-stream", "text/plain", "*/*")) },
+                    onDismissMessage = { message = null },
+                    onCheckUpdates = { checkForUpdates(manual = true) },
+                    onDownloadUpdate = { downloadUpdate() },
+                    onInstallUpdate = { installUpdate() },
+                    onDismissUpdate = { updateState = UpdateUiState.Idle },
                     showImportDialog = showImportDialog,
                     importText = importText,
                     importError = importError,
@@ -93,19 +144,21 @@ class MainActivity : ComponentActivity() {
                     },
                     onDismissImport = { showImportDialog = false },
                     onConfirmImport = {
-                        val outcome = saveProfileFromText(importText, namePrefix = null)
-                        if (outcome == null) {
+                        val error = saveProfileFromText(importText, namePrefix = null)
+                        if (error == null) {
                             showImportDialog = false
                             importText = ""
-                            profiles = app.repository.all()
-                            activeId = app.repository.activeProfile()?.id
+                            refreshProfiles()
                         } else {
-                            importError = outcome
+                            importError = error
                         }
                     },
                 )
             }
         }
+
+        // Automatic check, once per start. No silent download: the user is asked first.
+        checkForUpdates(manual = false)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -114,8 +167,61 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
+    // ---------------------------------------------------------------- updates
+
+    private fun checkForUpdates(manual: Boolean) {
+        if (updateState is UpdateUiState.Downloading) return
+        updateState = UpdateUiState.Checking
+        lifecycleScope.launch {
+            when (val result = updateChecker.check()) {
+                is UpdateResult.Available -> updateState = UpdateUiState.Available(result.info)
+                UpdateResult.UpToDate -> {
+                    updateState = UpdateUiState.Idle
+                    if (manual) message = "У вас последняя версия (${BuildConfig.VERSION_NAME})"
+                }
+                is UpdateResult.Failed -> {
+                    updateState = UpdateUiState.Idle
+                    // A failed background check must stay invisible; only a manual one reports.
+                    if (manual) message = result.reason
+                }
+            }
+        }
+    }
+
+    private fun downloadUpdate() {
+        val available = updateState as? UpdateUiState.Available ?: return
+        updateState = UpdateUiState.Downloading(0)
+        lifecycleScope.launch {
+            when (val res = updateInstaller.download(available.info) { pct ->
+                updateState = UpdateUiState.Downloading(pct)
+            }) {
+                is UpdateInstaller.DownloadResult.Ok -> updateState = UpdateUiState.ReadyToInstall(res.file)
+                is UpdateInstaller.DownloadResult.Failed -> updateState = UpdateUiState.Failed(res.message)
+            }
+        }
+    }
+
+    private fun installUpdate() {
+        val ready = updateState as? UpdateUiState.ReadyToInstall ?: return
+        val res = updateInstaller.install(ready.file)
+        if (res.isSuccess) {
+            updateState = UpdateUiState.Idle
+        } else {
+            updateState = UpdateUiState.Failed(
+                "Не удалось открыть установщик. Разрешите установку из неизвестных источников."
+            )
+        }
+    }
+
+    // ---------------------------------------------------------------- profiles
+
+    private fun refreshProfiles() {
+        profilesState = app.repository.all()
+        activeIdState = app.repository.activeProfile()?.id
+    }
+
     private fun requestConnect(profile: VpnProfile) {
-        importMessage = null
+        message = null
         val consent = app.connectionManager.vpnPermissionIntent()
         if (consent != null) {
             pendingProfileId = profile.id
@@ -125,62 +231,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun handleIntent(intent: Intent?) {
-        // DEBUG-ONLY test hooks: let automated tests push a config through `am start`.
-        // Compiled out of release builds because BuildConfig.DEBUG is a compile-time const.
-        if (BuildConfig.DEBUG) {
-            if (intent?.getBooleanExtra("debug_wdtt_profile", false) == true) {
-                val profile = VpnProfile(
-                    name = "Test WDTT (резерв)",
-                    protocol = Protocol.WDTT_PLUS,
-                    isFailoverTarget = true,
-                )
-                app.repository.save(profile, null)
-                importMessage = "Резервный профиль WDTT добавлен"
-                Diagnostics.event(Event.PROFILE_IMPORTED, "debug" to true, "protocol" to "WDTT")
-                return
-            }
-            val debugConfig = intent?.getStringExtra("debug_wg_config")
-            if (debugConfig != null) {
-                // Accept either raw text or "b64:<base64>" so multi-line configs survive
-                // the adb shell argument boundary, which splits on newlines.
-                val decoded = if (debugConfig.startsWith("b64:")) {
-                    runCatching {
-                        String(
-                            android.util.Base64.decode(
-                                debugConfig.removePrefix("b64:"),
-                                android.util.Base64.DEFAULT,
-                            )
-                        )
-                    }.getOrNull()
-                } else {
-                    debugConfig
-                }
-                if (decoded != null) {
-                    saveProfileFromText(decoded, namePrefix = "Test ")
-                    return
-                }
-            }
-        }
-
-        when (val result = DeepLinkHandler.parse(intent)) {
-            is DeepLinkHandler.Result.ImportRequest -> {
-                // Token only. Fetching the config requires a server; without one the UI
-                // must say so instead of pretending the import succeeded.
-                importMessage =
-                    "Ссылка принята (${DeepLinkHandler.hint(result.token)}). " +
-                        "Сервер выдачи конфигураций не настроен — импорт не выполнен."
-                Diagnostics.event(Event.DEEPLINK_RECEIVED, "stage" to "awaiting_server")
-            }
-            is DeepLinkHandler.Result.Rejected -> importMessage = result.reason
-            DeepLinkHandler.Result.NotOurs -> Unit
-        }
-    }
-
     /**
      * Validates raw config text and stores it.
-     *
-     * @return null on success, or a user-facing error message to show inline.
+     * @return null on success, or a user-facing error to show inline.
      */
     private fun saveProfileFromText(raw: String, namePrefix: String?): String? =
         when (val result = ConfigImporter.validate(raw)) {
@@ -193,7 +246,7 @@ class MainActivity : ComponentActivity() {
                 )
                 app.repository.save(profile, raw)
                 app.repository.setActive(profile.id)
-                importMessage = "Профиль добавлен: ${profile.name}"
+                message = "Профиль добавлен: ${profile.name}"
                 Diagnostics.event(
                     Event.PROFILE_IMPORTED,
                     "protocol" to result.protocol,
@@ -206,9 +259,90 @@ class MainActivity : ComponentActivity() {
                 result.reason
             }
         }
+
+    // ---------------------------------------------------------------- intents
+
+    private fun handleIntent(intent: Intent?) {
+        if (BuildConfig.DEBUG) {
+            if (intent?.getBooleanExtra("debug_wdtt_profile", false) == true) {
+                val profile = VpnProfile(
+                    name = "Test WDTT (резерв)",
+                    protocol = Protocol.WDTT_PLUS,
+                    isFailoverTarget = true,
+                )
+                app.repository.save(profile, null)
+                refreshProfiles()
+                message = "Резервный профиль WDTT добавлен"
+                return
+            }
+            intent?.getStringExtra("debug_wg_config")?.let { raw ->
+                val decoded = if (raw.startsWith("b64:")) {
+                    runCatching {
+                        String(android.util.Base64.decode(raw.removePrefix("b64:"), android.util.Base64.DEFAULT))
+                    }.getOrNull()
+                } else raw
+                if (decoded != null) {
+                    saveProfileFromText(decoded, namePrefix = "Test ")
+                    refreshProfiles()
+                    return
+                }
+            }
+        }
+
+        // A .conf opened from Telegram / Files arrives as VIEW or SEND.
+        when (intent?.action) {
+            Intent.ACTION_VIEW -> {
+                intent.data?.let { uri ->
+                    if (uri.scheme == "content" || uri.scheme == "file") {
+                        lifecycleScope.launch { importFromUri(uri) }
+                        return
+                    }
+                }
+            }
+            Intent.ACTION_SEND -> {
+                intent.getStringExtra(Intent.EXTRA_TEXT)?.let { text ->
+                    if (text.contains("[Interface]", ignoreCase = true)) {
+                        saveProfileFromText(text, namePrefix = null)
+                        refreshProfiles()
+                        return
+                    }
+                }
+                @Suppress("DEPRECATION")
+                (intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))?.let { uri ->
+                    lifecycleScope.launch { importFromUri(uri) }
+                    return
+                }
+            }
+        }
+
+        when (val result = DeepLinkHandler.parse(intent)) {
+            is DeepLinkHandler.Result.ImportRequest -> {
+                message = "Ссылка принята (${DeepLinkHandler.hint(result.token)}). " +
+                    "Сервер выдачи конфигураций не настроен — импорт не выполнен."
+                Diagnostics.event(Event.DEEPLINK_RECEIVED, "stage" to "awaiting_server")
+            }
+            is DeepLinkHandler.Result.Rejected -> message = result.reason
+            DeepLinkHandler.Result.NotOurs -> Unit
+        }
+    }
+
+    private suspend fun importFromUri(uri: Uri) {
+        when (val res = FileConfigReader.read(this, uri)) {
+            is FileConfigReader.Result.Ok -> {
+                val error = saveProfileFromText(res.text, namePrefix = null)
+                if (error == null) {
+                    refreshProfiles()
+                    message = "Импортировано: ${res.displayName}"
+                } else {
+                    message = "Файл отклонён: $error"
+                }
+            }
+            is FileConfigReader.Result.Error -> message = res.message
+        }
+    }
 }
 
-/** Small helper so the UI has no dependency on the engine's protocol enum ordering. */
+/** Short protocol tag used in profile names and avatar chips. */
 internal fun Protocol.shortName(): String = when (this) {
     Protocol.WIREGUARD -> "WG"
     Protocol.AMNEZIAWG -> "AWG"
