@@ -14,18 +14,18 @@
     </queries>
 
     <application
-        android:name=".MyVpnApplication"
+        android:name=".QwerApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.MyVpn">
+        android:theme="@style/Theme.Qwer">
 
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:theme="@style/Theme.MyVpn">
+            android:theme="@style/Theme.Qwer">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -36,7 +36,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="myvpn" android:host="import" />
+                <data android:scheme="qwer" android:host="import" />
             </intent-filter>
         </activity>
     </application>

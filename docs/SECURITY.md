@@ -20,7 +20,7 @@
 ```
 SharedPreferences "vpn_profiles"        ← метаданные (имя, протокол, endpoint). Без секретов.
 SharedPreferences "vpn_secure_configs"  ← ТОЛЬКО шифртекст AES-GCM + IV
-Android Keystore "myvpn_config_key_v1"  ← AES-256, non-exportable, TEE/StrongBox
+Android Keystore "qwer_config_key_v1"  ← AES-256, non-exportable, TEE/StrongBox
 ```
 
 `setUserAuthenticationRequired(false)` выбран осознанно: VPN должен уметь подняться

@@ -1,4 +1,4 @@
-# MyVPN — минималистичный клиент WireGuard / AmneziaWG / WDTT Plus
+# qwer — минималистичный клиент WireGuard / AmneziaWG / WDTT Plus
 
 Android-приложение (Kotlin + Jetpack Compose + Material 3) для подключения к VPN
 по трём протоколам с автоматическим переключением на резервный профиль.
@@ -15,7 +15,7 @@ Android-приложение (Kotlin + Jetpack Compose + Material 3) для по
 | Failover WG → WDTT | ✅ сработал за 13 с на реальном отказе | лог `FAILOVER_TRIGGERED` |
 | Восстановление после отказа | ✅ | повторное подключение, handshake подтверждён |
 | WDTT Plus как движок | ❌ только handover | GPLv3 + `exported=false` |
-| Deep links `myvpn://import` | ✅ парсинг + валидация | 8 юнит-тестов |
+| Deep links `qwer://import` | ✅ парсинг + валидация | 8 юнит-тестов |
 | Импорт с сервера по токену | ❌ сервер не реализован | нужен backend |
 
 ## Ключевое архитектурное решение
@@ -58,13 +58,13 @@ cp tunnel/build/outputs/aar/tunnel-release.aar ../vpn-mvp/app/libs/awg-tunnel.aa
 ## Структура
 
 ```
-app/src/main/java/com/myvpn/app/
+app/src/main/java/com/qwer/app/
 ├── core/          ConnectionManager, ConnectionState, Protocol, ProfileRepository
 ├── engine/        TunnelEngine (AmneziaWG), WdttPlusAdapter (handover)
 ├── failover/      FailoverController — чистый автомат, без Android
 ├── health/        ConnectivityProbe, TcpProbe (общий дедлайн)
 ├── config/        ConfigImporter — валидация WG/AWG без секретов в модели
-├── deeplink/      DeepLinkHandler — myvpn://import
+├── deeplink/      DeepLinkHandler — qwer://import
 ├── secure/        KeystoreConfigStore — AES-GCM через Android Keystore
 ├── diagnostics/   Diagnostics — структурные события со scrubbing
 └── ui/            MainActivity, MainScreen, Theme

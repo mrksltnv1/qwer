@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "myvpn"
+rootProject.name = "qwer"
 include(":app")

@@ -3,14 +3,14 @@
 ## Ссылка для добавления конфигурации
 
 ```
-myvpn://import?token=<opaque_token>
+qwer://import?token=<opaque_token>
 ```
 
 ### Что валидируется (и покрыто тестами)
 
 | Проверка | Правило | Тест |
 | --- | --- | --- |
-| Схема | строго `myvpn`, иначе `NotOurs` | `foreign scheme is not ours` |
+| Схема | строго `qwer`, иначе `NotOurs` | `foreign scheme is not ours` |
 | Хост | строго `import` (регистр не важен) | `foreign host is rejected` |
 | Токен присутствует | иначе `Rejected` | `missing token is rejected` |
 | Длина токена | 16…512 символов | `too short token is rejected` |
@@ -43,14 +43,14 @@ https://<домен>/download   → APK по HTTPS
 
 ## App Links
 
-Custom scheme `myvpn://` работает без домена и уже подключён в манифесте.
+Custom scheme `qwer://` работает без домена и уже подключён в манифесте.
 Verified App Links требуют собственного домена и `assetlinks.json`; поле
 `BuildConfig.APP_LINK_HOST` заведено пустым — заполняется при появлении домена.
 
 ## Что должен уметь бот
 
 1. Выдать ссылку на скачивание APK (HTTPS).
-2. Выдать `myvpn://import?token=...` по запросу пользователя.
+2. Выдать `qwer://import?token=...` по запросу пользователя.
 3. Токен — одноразовый, TTL (например, 15 минут), привязан к Telegram user id.
 
 ## Почему WDTT-ссылки не переиспользуются

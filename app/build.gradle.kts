@@ -19,11 +19,11 @@ val hasKeystore = keystorePropsFile.exists() &&
     keystoreProps.getProperty("storeFile") != null
 
 android {
-    namespace = "com.myvpn.app"
+    namespace = "com.qwer.app"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.myvpn.app"
+        applicationId = "com.qwer.app"
         minSdk = 26
         targetSdk = 36
         versionCode = 2
@@ -78,6 +78,18 @@ android {
         }
         debug {
             applicationIdSuffix = ".debug"
+        }
+    }
+
+    // Per-ABI splits: the universal APK is ~30 MB, which is painful to download on a
+    // slow or filtered link and a truncated download shows up as "App not installed".
+    // realme GT 6 is arm64-v8a, so a ~10 MB split is both faster and safer to transfer.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = true
         }
     }
 

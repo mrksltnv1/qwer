@@ -67,14 +67,14 @@ android {
 ```bash
 adb connect <device-ip>:5555
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n com.myvpn.app.debug/com.myvpn.app.ui.MainActivity
+adb shell am start -n com.qwer.app.debug/com.qwer.app.ui.MainActivity
 ```
 
 Разрешение VPN выдаётся системным диалогом при первом подключении. Для
 автоматизированных тестов:
 
 ```bash
-adb shell appops set com.myvpn.app.debug ACTIVATE_VPN allow
+adb shell appops set com.qwer.app.debug ACTIVATE_VPN allow
 ```
 
 ## Debug-хуки (только debug-сборка)
@@ -84,11 +84,11 @@ adb shell appops set com.myvpn.app.debug ACTIVATE_VPN allow
 ```bash
 # Импорт тестового конфига (base64, чтобы пережить границу аргумента adb shell)
 B64=$(base64 -w0 test-wg.conf)
-adb shell am start -n com.myvpn.app.debug/com.myvpn.app.ui.MainActivity \
+adb shell am start -n com.qwer.app.debug/com.qwer.app.ui.MainActivity \
   --es debug_wg_config "b64:$B64"
 
 # Добавить резервный WDTT-профиль
-adb shell am start -n com.myvpn.app.debug/com.myvpn.app.ui.MainActivity \
+adb shell am start -n com.qwer.app.debug/com.qwer.app.ui.MainActivity \
   --ez debug_wdtt_profile true
 ```
 
