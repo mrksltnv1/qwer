@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MyVPN</string>
+    <string name="connect">Подключить</string>
+    <string name="disconnect">Отключить</string>
+    <string name="reconnect">Переподключить</string>
+    <string name="state_disconnected">Отключено</string>
+    <string name="state_connecting">Подключение…</string>
+    <string name="state_verifying">Проверка соединения…</string>
+    <string name="state_connected">Подключено</string>
+    <string name="state_degraded">Связь нестабильна</string>
+    <string name="state_switching">Переключение…</string>
+    <string name="state_failed">Ошибка</string>
+    <string name="profiles">Конфигурации</string>
+    <string name="settings">Настройки</string>
+    <string name="no_profiles">Нет конфигураций. Импортируйте ссылкой из Telegram.</string>
+    <string name="auto_failover">Автопереключение</string>
+</resources>

@@ -1,0 +1,30 @@
+# Build outputs
+build/
+app/build/
+.gradle/
+captures/
+*.apk
+*.aab
+
+# Local SDK path — never commit (machine specific)
+local.properties
+
+# Signing material — never commit
+*.jks
+*.keystore
+keystore.properties
+release-audit*
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# Debug artifacts
+*.log
+!qa/first-users/device-run.log
+
+# NOTE on app/libs/awg-tunnel.aar:
+# It is INTENTIONALLY committed. There is no AmneziaWG tunnel artifact in Maven
+# Central, so a fresh clone cannot build without it. It is built from
+# amneziawg-android :tunnel (Apache-2.0); see docs/BUILD.md for reproduction.
