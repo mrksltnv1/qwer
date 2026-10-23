@@ -200,10 +200,18 @@ class ConnectionManager(
 
         // The published config is a normal WireGuard config, so the very same engine
         // that serves WG/AWG hosts it. One tunnel, one VpnService, one code path.
+        //
+        // CRITICAL: libclient.so is a child process of THIS app, so it shares our UID.
+        // Its TURN traffic to <host>:<dtls> would be captured by our own 0.0.0.0/0
+        // route and fed back into the tunnel — a self-amplifying loop. On a real device
+        // that showed up as "174 969 packets sent, 0 bytes received" and 122 MB in 16 s.
+        // Excluding our own package breaks the loop; libclient reaches TURN directly.
+        val hostedConfig = withSelfExclusion(config)
+
         val started = withContext(Dispatchers.IO) {
             runCatching {
                 val eng = engine ?: engineFactory(context).also { engine = it }
-                eng.up(config, tunnelName = TUNNEL_NAME)
+                eng.up(hostedConfig, tunnelName = TUNNEL_NAME)
             }
         }
         started.exceptionOrNull()?.let { err ->
@@ -219,7 +227,11 @@ class ConnectionManager(
         Diagnostics.event(Event.WDTT_ENGINE, "stage" to "tunnel_up", "peer" to parsed.safeLabel())
 
         _state.value = ConnectionState.Verifying
-        val ok = withContext(Dispatchers.IO) { probe.probe() }
+        // We excluded ourselves from the tunnel, so a plain TCP probe would test the
+        // DIRECT path and always succeed — a false "Connected". The only honest signal
+        // for WDTT is the tunnel's own receive counter: if the TURN relay works, bytes
+        // come back from 127.0.0.1:9000 through wg-go.
+        val ok = awaitWdttTraffic()
         val now = clock()
         if (ok) {
             failover.onConnected(now)
@@ -247,6 +259,49 @@ class ConnectionManager(
         repository.setActive(null)
         if (had) Diagnostics.event(Event.TUNNEL_STOP, "reason" to reason)
         _state.value = ConnectionState.Disconnected
+    }
+
+    /**
+     * Adds `ExcludedApplications = <our package>` to the [Interface] section.
+     *
+     * Supported by the engine: Interface.java allow-list -> GoBackend calls
+     * VpnService.Builder.addDisallowedApplication(). This is exactly how upstream
+     * WDTT Plus keeps its own TURN sockets out of its tunnel.
+     */
+    private fun withSelfExclusion(config: String): String {
+        if (config.contains("ExcludedApplications", ignoreCase = true)) return config
+        val lines = config.lines().toMutableList()
+        val idx = lines.indexOfFirst { it.trim().equals("[Interface]", ignoreCase = true) }
+        if (idx < 0) return config
+        lines.add(idx + 1, "ExcludedApplications = ${context.packageName}")
+        Diagnostics.event(Event.WDTT_ENGINE, "stage" to "self_excluded", "pkg" to context.packageName)
+        return lines.joinToString("\n")
+    }
+
+    /**
+     * Waits until the tunnel actually RECEIVES data.
+     *
+     * Because the app is excluded from its own tunnel, a TCP probe would test the
+     * direct path and always succeed — a false "Connected". The tunnel's own RX counter
+     * is the only honest signal for WDTT: bytes arriving from 127.0.0.1:9000 mean the
+     * TURN relay is actually carrying traffic.
+     */
+    private suspend fun awaitWdttTraffic(timeoutMillis: Long = 25_000L): Boolean {
+        val eng = engine ?: return false
+        val deadline = clock() + timeoutMillis
+        var baseline = -1L
+        while (clock() < deadline) {
+            val c = withContext(Dispatchers.IO) { eng.counters() }
+            if (baseline < 0) {
+                baseline = c.rxBytes
+            } else if (c.rxBytes - baseline >= 256) {
+                Diagnostics.event(Event.WDTT_ENGINE, "stage" to "traffic_ok", "rx" to c.rxBytes)
+                return true
+            }
+            delay(700)
+        }
+        Diagnostics.warn(Event.WDTT_ENGINE, null, "stage" to "no_traffic")
+        return false
     }
 
     private fun startMonitor(profile: VpnProfile) {
