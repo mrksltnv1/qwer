@@ -2,8 +2,10 @@ package com.qwer.app.engine
 
 import android.content.Context
 import android.os.Build
+import com.qwer.app.config.ConfigNormalizer
 import com.qwer.app.core.ConnectionState
 import com.qwer.app.core.Protocol
+import com.qwer.app.diagnostics.Diagnostics
 import org.amnezia.awg.backend.Backend
 import org.amnezia.awg.backend.GoBackend
 import org.amnezia.awg.backend.Tunnel
@@ -34,14 +36,31 @@ class TunnelEngine(private val context: Context) : AutoCloseable {
 
     fun isUp(): Boolean = current?.let { backend.getState(it) == Tunnel.State.UP } == true
 
+    /** Directives dropped from the last started config, for user-facing diagnostics. */
+    var lastRemovedKeys: List<String> = emptyList()
+        private set
+
     /**
      * Brings a tunnel up from raw config text.
+     *
+     * The config is sanitised first: the engine rejects the ENTIRE config when it meets
+     * a key outside its allow-list, and server-side exports routinely carry wg-quick
+     * directives (PostUp/PostDown/Table/SaveConfig/FwMark) that are meaningless inside a
+     * VpnService tunnel. Without this step a valid tunnel simply refuses to start.
      *
      * @throws IllegalStateException when the engine refuses the config or the user has not
      *         granted the VPN permission (the caller must run VpnService.prepare first).
      */
     fun up(rawConfig: String, tunnelName: String = DEFAULT_NAME) {
-        val parsed: Config = Config.parse(BufferedReader(StringReader(rawConfig)))
+        val normalized = ConfigNormalizer.sanitize(rawConfig)
+        lastRemovedKeys = normalized.removedKeys
+        if (normalized.hadChanges) {
+            Diagnostics.event(
+                Diagnostics.Event.TUNNEL_START,
+                "dropped_wgquick_keys" to normalized.removedKeys.joinToString(","),
+            )
+        }
+        val parsed: Config = Config.parse(BufferedReader(StringReader(normalized.config)))
         val tunnel = EngineTunnel(tunnelName)
         backend.setState(tunnel, Tunnel.State.UP, parsed)
         current = tunnel
