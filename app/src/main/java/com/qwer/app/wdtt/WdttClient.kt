@@ -73,6 +73,11 @@ class WdttClient(private val context: Context) {
             )
         }
 
+        // Flags mirror WDTT Plus TunnelManager: without -device-info the native client
+        // registers an incomplete device and the server can drop it, and without
+        // -transport-experiment it falls back to an older transport path. Both were
+        // missing here, and the visible symptom was the process exiting a few seconds
+        // after start with no explanation.
         val cmd = listOf(
             binary.absolutePath,
             "-peer", link.peer,
@@ -80,7 +85,9 @@ class WdttClient(private val context: Context) {
             "-startup-config-stdin=true",
             "-n", workers.toString(),
             "-mode", "vpn",
+            "-transport-experiment", "auto",
             "-device-id", deviceId(),
+            "-device-info", deviceInfoJson(),
         )
 
         val proc = try {
@@ -125,8 +132,18 @@ class WdttClient(private val context: Context) {
         if (config == null) {
             val tail = _state.value.lastLine
             val alive = proc.isAlive
+            // Exit status is the single most useful fact when the process dies, and it
+            // was not recorded: the log only said alive=false.
+            val exit = runCatching { if (alive) -1 else proc.exitValue() }.getOrDefault(-1)
             stop()
-            Diagnostics.warn(Event.WDTT_ENGINE, null, "stage" to "no_config", "alive" to alive)
+            Diagnostics.warn(
+                Event.WDTT_ENGINE,
+                null,
+                "stage" to "no_config",
+                "alive" to alive,
+                "exit" to exit,
+                "tail" to (tail ?: "-"),
+            )
             return@withContext StartResult.Failed(
                 when {
                     !alive -> "WDTT-клиент завершился: ${tail ?: "нет данных"}"
@@ -208,6 +225,38 @@ class WdttClient(private val context: Context) {
         }
         process = null
         _state.value = WdttState()
+    }
+
+    /**
+     * Device description handed to the client as `-device-info`.
+     *
+     * The reference implementation always sends this JSON; the client reports it to the
+     * server alongside the password, and a missing value was one of the differences
+     * between our launch and a working one.
+     */
+    private fun deviceInfoJson(): String {
+        val locale = java.util.Locale.getDefault()
+        val name = runCatching {
+            android.provider.Settings.Global.getString(
+                context.contentResolver,
+                "device_name",
+            )
+        }.getOrNull().orEmpty().ifBlank {
+            listOf(android.os.Build.MANUFACTURER, android.os.Build.MODEL)
+                .joinToString(" ").trim().ifBlank { "Android device" }
+        }
+        return JSONObject()
+            .put("name", name)
+            .put("manufacturer", android.os.Build.MANUFACTURER.orEmpty())
+            .put("brand", android.os.Build.BRAND.orEmpty())
+            .put("model", android.os.Build.MODEL.orEmpty())
+            .put("android_version", android.os.Build.VERSION.RELEASE.orEmpty())
+            .put("sdk", android.os.Build.VERSION.SDK_INT)
+            .put("abi", android.os.Build.SUPPORTED_ABIS.firstOrNull().orEmpty())
+            .put("locale", locale.toLanguageTag())
+            .put("country", locale.country.orEmpty())
+            .put("time_zone", java.util.TimeZone.getDefault().id)
+            .toString()
     }
 
     /** Per-install id persisted so the server keeps the device binding stable. */

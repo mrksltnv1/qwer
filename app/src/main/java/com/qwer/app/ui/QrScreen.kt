@@ -43,6 +43,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.qwer.app.qr.QrAnalyzer
 import com.qwer.app.qr.QrCodec
+import com.qwer.app.wdtt.WdttClientCard
 import com.qwer.app.wdtt.WdttLink
 import java.util.concurrent.Executors
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,6 +65,11 @@ import androidx.compose.ui.text.style.TextOverflow
 @Composable
 fun QrScanScreen(
     onImport: (config: String) -> Unit,
+    /**
+     * A WDTT client card carries credentials but NO server address, so it cannot become
+     * a profile on its own. The host asks for the address and assembles the link.
+     */
+    onClientCard: (WdttClientCard) -> Unit,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -141,7 +147,29 @@ fun QrScanScreen(
                         return@CameraPreview
                     }
 
-                    // 2) Anything else: a plain config or a wdtt:// link, i.e. what a
+                    // 2) A WDTT client card: credentials only, no address. Checked
+                    //    before the link parser because it is JSON, not a URI.
+                    if (WdttClientCard.looksLikeCard(text)) {
+                        when (val cardResult = WdttClientCard.parse(text)) {
+                            is WdttClientCard.Result.Ok -> {
+                                done = true
+                                onClientCard(cardResult.card)
+                                status = "Карточка клиента распознана"
+                                statusIsError = false
+                            }
+                            is WdttClientCard.Result.Invalid -> {
+                                status = cardResult.reason
+                                statusIsError = true
+                            }
+                            WdttClientCard.Result.NotACard -> {
+                                status = "Это не конфигурация VPN"
+                                statusIsError = true
+                            }
+                        }
+                        return@CameraPreview
+                    }
+
+                    // 3) Anything else: a plain config or a wdtt:// link, i.e. what a
                     //    provider actually prints in a QR code.
                     val plain = normalizeScanned(text)
                     if (plain != null) {

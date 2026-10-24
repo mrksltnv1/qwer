@@ -8,6 +8,15 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -16,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
@@ -38,6 +48,7 @@ import com.qwer.app.update.UpdateChecker
 import com.qwer.app.update.UpdateInstaller
 import com.qwer.app.update.UpdateResult
 import com.qwer.app.update.UpdateUiState
+import com.qwer.app.wdtt.WdttClientCard
 import com.qwer.app.wdtt.WdttLink
 import com.qwer.app.wdtt.WdttParseResult
 import kotlinx.coroutines.launch
@@ -61,6 +72,10 @@ class MainActivity : ComponentActivity() {
     // once and returns to the profile list. A dedicated tab made it look like a
     // feature to browse rather than a way to add a profile.
     private var showQrScan by mutableStateOf(false)
+    // A scanned WDTT client card waits here until the user supplies the server address.
+    private var pendingClientCard by mutableStateOf<WdttClientCard?>(null)
+    private var clientCardHost by mutableStateOf("")
+    private var clientCardError by mutableStateOf<String?>(null)
     private var tab by mutableStateOf(AppTab.HOME)
     private var importText by mutableStateOf("")
     private var importError by mutableStateOf<String?>(null)
@@ -318,10 +333,125 @@ class MainActivity : ComponentActivity() {
                                     message = error
                                 }
                             },
+                            onClientCard = { card ->
+                                // The card carries credentials but NO server address — it
+                                // is minted server-side for a client that already knows the
+                                // host. Ask once instead of rejecting the code.
+                                pendingClientCard = card
+                                clientCardHost = ""
+                                clientCardError = null
+                                showQrScan = false
+                            },
                             onClose = { showQrScan = false },
                         )
                     }
                 }
+            }
+
+            val card = pendingClientCard
+            if (card != null) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = {
+                        pendingClientCard = null
+                        clientCardHost = ""
+                        clientCardError = null
+                    },
+                    title = {
+                        Text(
+                            "Адрес сервера WDTT",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    text = {
+                        Column {
+                            Text(
+                                "Карточка «${card.safeLabel()}» содержит пароль и VK-хеш, " +
+                                    "но не содержит адрес сервера. Укажите адрес один раз.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            androidx.compose.material3.OutlinedTextField(
+                                value = clientCardHost,
+                                onValueChange = {
+                                    clientCardHost = it
+                                    clientCardError = null
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                placeholder = { Text("195.58.51.229", maxLines = 1) },
+                                isError = clientCardError != null,
+                            )
+                            val err = clientCardError
+                            if (err != null) {
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    err,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    maxLines = 2,
+                                )
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "Порты по умолчанию: DTLS 56000, WG 56001.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                val host = clientCardHost.trim()
+                                // Catch the obvious mistakes here: an empty host or a
+                                // pasted URL would build a link the parser rejects later
+                                // with a far less helpful message.
+                                val problem = when {
+                                    host.isEmpty() -> "Укажите адрес сервера"
+                                    host.startsWith("http", ignoreCase = true) ||
+                                        host.contains("/") ->
+                                        "Нужен только адрес, без http:// и пути"
+                                    else -> null
+                                }
+                                if (problem != null) {
+                                    clientCardError = problem
+                                } else {
+                                    val link = card.toLink(host)
+                                    val error = saveProfileFromText(
+                                        link,
+                                        namePrefix = null,
+                                        exactName = "WDTT · ${card.safeLabel()}",
+                                    )
+                                    if (error == null) {
+                                        refreshProfiles()
+                                        pendingClientCard = null
+                                        clientCardHost = ""
+                                        clientCardError = null
+                                        message = "Профиль добавлен из карточки клиента"
+                                    } else {
+                                        clientCardError = error
+                                    }
+                                }
+                            },
+                        ) {
+                            Text("Добавить", maxLines = 1)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = {
+                                pendingClientCard = null
+                                clientCardHost = ""
+                                clientCardError = null
+                            },
+                        ) {
+                            Text("Отмена", maxLines = 1)
+                        }
+                    },
+                )
             }
             }
         }
