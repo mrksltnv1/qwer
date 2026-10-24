@@ -9,9 +9,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -26,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
@@ -212,10 +218,19 @@ class MainActivity : ComponentActivity() {
                     AppTab.ROUTING -> {
                         val target = routingProfile
                         if (target == null) {
-                            AppRoutingScreen(
-                                apps = emptyList(),
-                                initial = AppRouting.All,
-                                onApply = {},
+                            /*
+                             * No profile yet. This used to render a full picker with an
+                             * empty app list and a dead "Применить" button, which reads
+                             * as "the feature is broken" — the exact report we got from
+                             * a fresh install. Explain the actual prerequisite instead.
+                             */
+                            NoProfileNotice(
+                                onAddProfile = {
+                                    tab = AppTab.HOME
+                                    importText = ""
+                                    importError = null
+                                    showImportDialog = true
+                                },
                                 onClose = { tab = AppTab.HOME },
                             )
                         } else {
@@ -771,6 +786,27 @@ class MainActivity : ComponentActivity() {
                     // BlissOS test VM shows system overlays (home-app resolver, welcome
                     // screen) that swallow synthetic taps, which made UI-driven tests
                     // report a false "tunnel never started".
+                    // Debug-only: set per-app routing on the just-saved profile so the
+                    // feature can be exercised end-to-end on a real device. Nothing else
+                    // in the app sets routing without the picker.
+                    intent?.getStringExtra("debug_routing_except")?.let { raw ->
+                        val pkgs = raw.split(',')
+                            .map { it.trim() }
+                            .filter { it.isNotEmpty() }
+                            .toSet()
+                        val id = app.repository.activeProfile()?.id
+                        val saved = id?.let { app.repository.find(it) }
+                        if (saved != null) {
+                            app.repository.save(
+                                saved.copy(appRouting = AppRouting.Except(pkgs)),
+                                null,
+                            )
+                            Diagnostics.event(
+                                Event.TUNNEL_START,
+                                "debug_routing_except" to pkgs.size,
+                            )
+                        }
+                    }
                     if (intent?.getBooleanExtra("debug_auto_connect", false) == true) {
                         val id = app.repository.activeProfile()?.id
                         if (id != null) {
@@ -841,4 +877,53 @@ internal fun Protocol.shortName(): String = when (this) {
     Protocol.WIREGUARD -> "WG"
     Protocol.AMNEZIAWG -> "AWG"
     Protocol.WDTT_PLUS -> "WDTT"
+}
+
+/**
+ * Shown when the routing tab is opened before any profile exists.
+ *
+ * The picker needs a profile to attach the rule to; without one it can only show an
+ * empty list. Saying so, and offering the next step, beats a dead screen.
+ */
+@androidx.compose.runtime.Composable
+private fun NoProfileNotice(
+    onAddProfile: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Маршрутизация",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
+            IconButton(onClick = onClose) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Закрыть",
+                )
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+        Text(
+            "Сначала добавьте конфигурацию",
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Правило «через VPN» или «мимо VPN» привязывается к профилю. " +
+                "Импортируйте конфигурацию, затем вернитесь сюда.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(16.dp))
+        TextButton(onClick = onAddProfile) {
+            Text("Добавить конфигурацию", maxLines = 1)
+        }
+    }
 }
