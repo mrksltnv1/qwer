@@ -236,7 +236,7 @@ class ConnectionManager(
         }
 
         // One tunnel at a time: never start over a live one.
-        if (engine?.isUp() == true) stopTunnelLocked("before-start")
+        if (engine?.isUp() == true) stopForRestart()
 
         _state.value = ConnectionState.Connecting
         // Foreground guarantee: without it Android freezes the process after screen-off
@@ -325,7 +325,7 @@ class ConnectionManager(
             }
         }
 
-        if (engine?.isUp() == true) stopTunnelLocked("before-start")
+        if (engine?.isUp() == true) stopForRestart()
 
         _state.value = ConnectionState.Connecting
         withContext(Dispatchers.Main) { ConnectionForegroundService.start(context) }
@@ -403,10 +403,36 @@ class ConnectionManager(
         }
     }
 
-    private suspend fun withLockStop(reason: String) {
+    private suspend fun withLockStop(
+        reason: String,
+        /**
+         * False when the caller IS the operation that owns the current ticket.
+         *
+         * This is the "стоп перед стартом" case: connectInternal takes a ticket, notices
+         * a live engine, and tears it down before starting the new one. Invalidating
+         * there cancels the ticket that is doing the work, so the very next
+         * `opGate.isCurrent(ticket)` returns false and the fresh tunnel is destroyed.
+         * The field log showed exactly that:
+         *
+         *   TUNNEL_START protocol=AMNEZIAWG
+         *   TUNNEL_STOP  reason=before-start
+         *   WDTT_ENGINE  stage=started
+         *   TUNNEL_STOP  reason=stale_start_wdtt     <- self-inflicted
+         *
+         * A real user stop still invalidates; it arrives on a separate call.
+         */
+        invalidateTicket: Boolean = true,
+        /**
+         * Keep the foreground service alive across a restart. Stopping and immediately
+         * re-starting it made the log read
+         * `created -> destroyed 47s -> lost -> created` on every profile switch, and each
+         * teardown briefly removed the foreground guarantee that keeps the process alive.
+         */
+        keepForeground: Boolean = false,
+    ) {
         // Invalidate first: any operation still in flight becomes stale immediately and
         // will roll back its own resources instead of publishing state.
-        opGate.invalidate()
+        if (invalidateTicket) opGate.invalidate()
         monitorJob?.cancel()
         monitorJob = null
         val had = engine != null || wdttClient != null
@@ -426,8 +452,21 @@ class ConnectionManager(
         repository.setActive(null)
         if (had) Diagnostics.event(Event.TUNNEL_STOP, "reason" to reason)
         _state.value = ConnectionState.Disconnected
-        withContext(Dispatchers.Main) { ConnectionForegroundService.stop(context) }
+        if (!keepForeground) {
+            withContext(Dispatchers.Main) { ConnectionForegroundService.stop(context) }
+        }
     }
+
+    /**
+     * Tears down a live tunnel on behalf of the operation that is about to replace it.
+     * Deliberately does not invalidate the current ticket and does not drop the
+     * foreground service: the caller continues in the same operation.
+     */
+    private suspend fun stopForRestart() = withLockStop(
+        reason = "before-start",
+        invalidateTicket = false,
+        keepForeground = true,
+    )
 
     /**
      * Adds `ExcludedApplications = <our package>` to the [Interface] section.

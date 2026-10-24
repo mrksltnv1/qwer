@@ -9,6 +9,14 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
+      QR scanning. Declared as not required so the app still installs on a device
+      without a camera; the scan pane then shows its own message instead.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
+    <!--
       REQUIRED to start the system installer from inside the app on Android 8+.
       Without it `startActivity(ACTION_VIEW, apk)` does nothing at all: no dialog,
       no exception, no logcat line. That is exactly the "нажимаю Установить —

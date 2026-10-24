@@ -146,6 +146,13 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.android)
 
+    // QR: zxing draws/reads the matrix, CameraX feeds it frames. Kept as ordinary
+    // dependencies (no embedded scanner app) so the import flow stays inside our UI.
+    implementation(libs.zxing.core)
+    implementation(libs.camerax.camera2)
+    implementation(libs.camerax.lifecycle)
+    implementation(libs.camerax.view)
+
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     testImplementation(libs.junit)

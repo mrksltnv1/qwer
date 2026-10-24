@@ -97,7 +97,9 @@ class ConnectionForegroundService : Service() {
         )
         // Tell ConnectionManager the foreground guarantee is gone so it can decide
         // whether the tunnel should be torn down rather than left half-alive.
-        (application as? QwerApplication)?.onForegroundServiceLost()
+        // A stop we asked for is not a loss: the tunnel is already down by then.
+        (application as? QwerApplication)?.onForegroundServiceLost(intentional = intentionalStop)
+        intentionalStop = false
         super.onDestroy()
     }
 
@@ -126,6 +128,21 @@ class ConnectionForegroundService : Service() {
         var isRunning: Boolean = false
             private set
 
+        /**
+         * True between our own [stop] call and the actual onDestroy.
+         *
+         * WHY: onDestroy is called for BOTH "the system killed us" and "we stopped on
+         * purpose". The field log showed a false alarm on every normal disconnect:
+         *
+         *   FOREGROUND_SERVICE stage=destroyed lifetime_ms=47347
+         *   ! FOREGROUND_SERVICE stage=lost        <- normal teardown, reported as a loss
+         *
+         * A real loss must be distinguishable from an expected stop, otherwise the one
+         * warning that matters gets lost in noise.
+         */
+        @Volatile
+        private var intentionalStop: Boolean = false
+
         /** Idempotent: safe to call on every connect attempt. */
         fun start(context: Context) {
             val intent = Intent(context, ConnectionForegroundService::class.java)
@@ -141,7 +158,11 @@ class ConnectionForegroundService : Service() {
         }
 
         fun stop(context: Context) {
-            runCatching { context.stopService(Intent(context, ConnectionForegroundService::class.java)) }
+            // Set before stopService: onDestroy runs on the main thread right after.
+            intentionalStop = true
+            runCatching {
+                context.stopService(Intent(context, ConnectionForegroundService::class.java))
+            }
         }
     }
 }

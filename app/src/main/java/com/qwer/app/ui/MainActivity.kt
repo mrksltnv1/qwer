@@ -25,9 +25,11 @@ import com.qwer.app.config.ConfigImporter
 import com.qwer.app.config.FileConfigReader
 import com.qwer.app.config.ImportResult
 import com.qwer.app.core.Protocol
+import com.qwer.app.core.AppRouting
 import com.qwer.app.core.VpnProfile
 import com.qwer.app.deeplink.DeepLinkHandler
 import com.qwer.app.device.DiagnosticEngine
+import com.qwer.app.device.InstalledApps
 import com.qwer.app.device.DiagnosticReport
 import com.qwer.app.diagnostics.Diagnostics
 import com.qwer.app.diagnostics.Diagnostics.Event
@@ -70,6 +72,11 @@ class MainActivity : ComponentActivity() {
     private var backupPreview by mutableStateOf<BackupManager.PreviewResult?>(null)
     private var profilesState by mutableStateOf<List<VpnProfile>>(emptyList())
     private var activeIdState by mutableStateOf<String?>(null)
+
+    // Routing picker: which profile is being edited, and the launchable-app list.
+    // The app list is loaded once per open, not per recomposition.
+    private var routingProfile by mutableStateOf<VpnProfile?>(null)
+    private var installedApps by mutableStateOf<List<InstalledApps.Entry>>(emptyList())
 
     private lateinit var updateChecker: UpdateChecker
     private lateinit var updateInstaller: UpdateInstaller
@@ -156,7 +163,23 @@ class MainActivity : ComponentActivity() {
 
             QwerTheme {
                 Scaffold(
-                    bottomBar = { AppBottomBar(selected = tab, onSelect = { tab = it }) },
+                    bottomBar = {
+                        AppBottomBar(
+                            selected = tab,
+                            onSelect = { next ->
+                                if (next == AppTab.ROUTING) {
+                                    // Entering the picker: choose the profile it edits and
+                                    // load launchable apps once. Doing it here (not in the
+                                    // composable) keeps the PackageManager query off the
+                                    // recomposition path.
+                                    routingProfile = activeIdState?.let { app.repository.find(it) }
+                                        ?: profilesState.firstOrNull()
+                                    installedApps = InstalledApps.launchable(this@MainActivity)
+                                }
+                                tab = next
+                            },
+                        )
+                    },
                 ) { innerPadding ->
                 Box(Modifier.padding(innerPadding)) {
                 when (tab) {
@@ -170,6 +193,51 @@ class MainActivity : ComponentActivity() {
                         onRun = { runDiagnostics() },
                         onClose = { tab = AppTab.HOME },
                     )
+                    AppTab.QR -> QrScreen(
+                        profiles = profilesState,
+                        configForProfile = { id -> app.repository.configFor(id) },
+                        onImport = { name, config ->
+                            val error = saveProfileFromText(config, namePrefix = null)
+                            if (error == null) {
+                                refreshProfiles()
+                            } else {
+                                message = error
+                            }
+                            tab = AppTab.HOME
+                        },
+                        onClose = { tab = AppTab.HOME },
+                    )
+                    AppTab.ROUTING -> {
+                        val target = routingProfile
+                        if (target == null) {
+                            AppRoutingScreen(
+                                apps = emptyList(),
+                                initial = AppRouting.All,
+                                onApply = {},
+                                onClose = { tab = AppTab.HOME },
+                            )
+                        } else {
+                            AppRoutingScreen(
+                                apps = installedApps,
+                                initial = target.appRouting,
+                                onApply = { routing ->
+                                    app.repository.save(target.copy(appRouting = routing), null)
+                                    refreshProfiles()
+                                    routingProfile = null
+                                    message = if (routing is AppRouting.All) {
+                                        "Весь трафик через VPN"
+                                    } else {
+                                        "Приложений в правиле: ${AppRouting.selectedCount(routing)}"
+                                    }
+                                    tab = AppTab.HOME
+                                },
+                                onClose = {
+                                    routingProfile = null
+                                    tab = AppTab.HOME
+                                },
+                            )
+                        }
+                    }
                     AppTab.BACKUP -> BackupScreen(
                         onClose = { tab = AppTab.HOME },
                         onExport = { pw, uri -> exportBackup(pw, uri) },

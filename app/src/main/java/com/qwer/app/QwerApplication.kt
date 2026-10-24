@@ -71,7 +71,13 @@ class QwerApplication : Application() {
      * Rather than leave a half-alive tunnel that the UI still calls "Connected", we
      * stop it and let the user (or a later wake) reconnect cleanly.
      */
-    fun onForegroundServiceLost() {
+    fun onForegroundServiceLost(intentional: Boolean = false) {
+        if (intentional) {
+            // Expected teardown: the tunnel is already down. Logging this as a warning
+            // trained the reader to ignore the one line that signals a real loss.
+            Diagnostics.event(Event.FOREGROUND_SERVICE, "stage" to "stopped")
+            return
+        }
         Diagnostics.warn(Event.FOREGROUND_SERVICE, null, "stage" to "lost")
         val st = connectionManager.state.value
         if (st is com.qwer.app.core.ConnectionState.Connected ||

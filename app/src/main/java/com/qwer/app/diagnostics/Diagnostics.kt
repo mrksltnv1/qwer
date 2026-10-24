@@ -67,7 +67,14 @@ object Diagnostics {
         val rendered = fields.joinToString(" ") { (k, v) -> "$k=${scrub(v?.toString() ?: "-")}" }
         // Only the exception type and message are recorded, and the message is scrubbed:
         // engine stack traces can embed config fragments.
-        val line = "${event.name} $rendered err=${throwable?.javaClass?.simpleName}: ${scrub(throwable?.message ?: "")}"
+        //
+        // The exception part is OMITTED when there is no exception. It used to be
+        // rendered as "err=null: " on every non-error warning, which read like a
+        // crash with an empty message and made real errors harder to spot.
+        val err = throwable?.let {
+            " err=${it.javaClass.simpleName}: ${scrub(it.message ?: "")}"
+        } ?: ""
+        val line = "${event.name}$err $rendered".replace(Regex(" +"), " ")
         Log.w(TAG, line)
         record("! $line")
     }

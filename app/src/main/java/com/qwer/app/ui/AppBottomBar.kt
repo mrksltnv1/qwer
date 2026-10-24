@@ -1,7 +1,9 @@
 package com.qwer.app.ui
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Home
@@ -15,7 +17,9 @@ import androidx.compose.runtime.Composable
 enum class AppTab(val label: String) {
     HOME("Главная"),
     LOGS("Логи"),
-    DIAGNOSTICS("Диагностика"),
+    QR("QR"),
+    ROUTING("Маршрут"),
+    DIAGNOSTICS("Диаг"),
     BACKUP("Копия"),
 }
 
@@ -43,6 +47,18 @@ fun AppBottomBar(
             onClick = { onSelect(AppTab.LOGS) },
             icon = { Icon(Icons.Filled.Description, contentDescription = null) },
             label = { Text(AppTab.LOGS.label) },
+        )
+        NavigationBarItem(
+            selected = selected == AppTab.QR,
+            onClick = { onSelect(AppTab.QR) },
+            icon = { Icon(Icons.Filled.QrCode2, contentDescription = null) },
+            label = { Text(AppTab.QR.label) },
+        )
+        NavigationBarItem(
+            selected = selected == AppTab.ROUTING,
+            onClick = { onSelect(AppTab.ROUTING) },
+            icon = { Icon(Icons.Filled.Apps, contentDescription = null) },
+            label = { Text(AppTab.ROUTING.label) },
         )
         NavigationBarItem(
             selected = selected == AppTab.DIAGNOSTICS,
