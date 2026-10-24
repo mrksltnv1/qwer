@@ -68,12 +68,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qwer.app.core.ConnectionState
 import com.qwer.app.core.FailureReason
+import com.qwer.app.core.TrafficSnapshot
 import com.qwer.app.core.VpnProfile
 import com.qwer.app.update.UpdateUiState
 import kotlinx.coroutines.delay
@@ -98,6 +100,7 @@ fun MainScreen(
     profiles: List<VpnProfile>,
     activeProfileId: String?,
     autoFailover: Boolean,
+    traffic: TrafficSnapshot,
     message: String?,
     wdttInstalled: Boolean,
     updateState: UpdateUiState,
@@ -155,6 +158,13 @@ fun MainScreen(
         Spacer(Modifier.height(12.dp))
 
         StateHero(state)
+
+        // Traffic block: only while a session exists, so the screen never shows a
+        // permanent "0 B" that would look like a broken tunnel.
+        if (state is ConnectionState.Connected || state is ConnectionState.Degraded) {
+            Spacer(Modifier.height(12.dp))
+            TrafficCard(traffic)
+        }
 
         Spacer(Modifier.height(24.dp))
 
@@ -879,4 +889,100 @@ private fun rememberElapsed(sinceMillis: Long): String {
     val m = (total % 3600) / 60
     val s = total % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+}
+
+// ---------------------------------------------------------------- traffic card
+
+/**
+ * Session block: protocol, live in/out counters and the duration of the current
+ * connection.
+ *
+ * Design decisions:
+ *  - [TrafficSnapshot.Unavailable] renders an explicit "нет данных" instead of zeros.
+ *    Showing 0 B would imply a working-but-idle tunnel, which may be false.
+ *  - Units are binary and formatted by [TrafficSnapshot.Known.formatBytes] so the
+ *    number and its label can never disagree.
+ *  - The duration comes from the session start recorded at connect time, not from the
+ *    composable's lifetime.
+ */
+@Composable
+private fun TrafficCard(traffic: TrafficSnapshot) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            when (traffic) {
+                TrafficSnapshot.Unavailable -> {
+                    Text("Статистика", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Нет данных от движка",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                is TrafficSnapshot.Known -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            traffic.protocol.displayName,
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Text(
+                            traffic.formatDuration(
+                                traffic.sessionDurationMillis(System.currentTimeMillis())
+                            ),
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        TrafficTile(
+                            label = "Входящий",
+                            value = traffic.formatBytes(traffic.rxBytes),
+                            modifier = Modifier.weight(1f),
+                        )
+                        TrafficTile(
+                            label = "Исходящий",
+                            value = traffic.formatBytes(traffic.txBytes),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrafficTile(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(12.dp),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            value,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
 }

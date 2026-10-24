@@ -48,6 +48,9 @@ object Diagnostics {
         DEEPLINK_REJECTED,
         VPN_PERMISSION,
         TILE_ACTION,
+        NETWORK_EVENT,
+        SLEEP_RECOVERY,
+        TRAFFIC_SAMPLE,
     }
 
     fun event(event: Event, vararg fields: Pair<String, Any?>) {

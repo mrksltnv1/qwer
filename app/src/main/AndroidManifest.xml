@@ -92,5 +92,16 @@
                 android:name="android.service.quicksettings.ACTIVE_TILE"
                 android:value="true" />
         </service>
+
+        <!-- Handles the Disconnect / Retry buttons on the status notification. -->
+        <receiver
+            android:name=".service.VpnControlReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.qwer.app.action.DISCONNECT" />
+                <action android:name="com.qwer.app.action.RECONNECT" />
+            </intent-filter>
+        </receiver>
     </application>
+
 </manifest>

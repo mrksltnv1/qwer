@@ -112,6 +112,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val state by app.connectionManager.state.collectAsStateWithLifecycle()
+            val traffic by app.connectionManager.trafficState.collectAsStateWithLifecycle()
             val auto by app.connectionManager.autoFailoverEnabled.collectAsStateWithLifecycle()
 
             QwerTheme {
@@ -129,6 +130,7 @@ class MainActivity : ComponentActivity() {
                     profiles = profilesState,
                     activeProfileId = activeIdState,
                     autoFailover = auto,
+                    traffic = traffic,
                     message = message,
                     wdttInstalled = app.wdtt.availability().installed,
                     updateState = updateState,

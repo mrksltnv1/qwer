@@ -27,6 +27,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -69,6 +70,19 @@ class ConnectionManager(
     private var activeProfile: VpnProfile? = null
     private val failover = FailoverController(failoverConfig)
 
+    /** Session-relative traffic counters; anchored at every successful connect. */
+    private val traffic = TrafficSessionTracker(clock)
+    private val _traffic = MutableStateFlow<TrafficSnapshot>(TrafficSnapshot.Unavailable)
+    val trafficState: StateFlow<TrafficSnapshot> = _traffic.asStateFlow()
+    private var trafficJob: Job? = null
+
+    /** Sleep / network-change / retry events. Decisions stay below, in this class. */
+    private val lifecycle = NetworkLifecycleMonitor(context)
+    private var lifecycleJob: Job? = null
+
+    /** Bounded recovery attempts since the last healthy connection. */
+    private var recoveryAttempt = 0
+
     /** Non-null only while an embedded WDTT client is running. */
     private var wdttClient: WdttClient? = null
 
@@ -103,6 +117,63 @@ class ConnectionManager(
     fun setAutoFailover(enabled: Boolean) {
         _autoFailoverEnabled.value = enabled
         if (!enabled) failover.onDisconnected()
+    }
+
+    /**
+     * Starts the lifecycle watchers. Called once from the Application.
+     *
+     * Separated from the constructor so unit tests can build a ConnectionManager
+     * without registering Android receivers.
+     */
+    fun startLifecycleMonitoring() {
+        lifecycle.start()
+        lifecycleJob?.cancel()
+        lifecycleJob = scope.launch {
+            lifecycle.triggers.collect { trigger ->
+                onLifecycleTrigger(trigger)
+            }
+        }
+    }
+
+    /**
+     * Reacts to wake / network changes without fighting the failover state machine.
+     *
+     * The rule: only *re-validate* here. Actual switching stays in the monitor loop, so
+     * a wake event cannot race a failover decision.
+     */
+    private suspend fun onLifecycleTrigger(trigger: NetworkLifecycleMonitor.Trigger) {
+        val current = _state.value
+        if (current !is ConnectionState.Connected && current !is ConnectionState.Degraded) {
+            // Not connected: nothing to recover. A pending connect is already in flight.
+            return
+        }
+        Diagnostics.event(Event.SLEEP_RECOVERY, "trigger" to trigger.name)
+
+        val ok = withContext(Dispatchers.IO) { probe.probe() }
+        if (ok) {
+            recoveryAttempt = 0
+            lifecycle.cancelRetry()
+            if (current is ConnectionState.Degraded) {
+                val since = current.sinceMillis
+                _state.value = ConnectionState.Connected(current.protocol, since, clock())
+                failover.onConnected(since)
+            }
+            return
+        }
+
+        // Still no connectivity. Do NOT tear the tunnel down on a single failed probe:
+        // the monitor window handles sustained failure. Just schedule a bounded retry.
+        recoveryAttempt++
+        if (recoveryAttempt <= MAX_RECOVERY_ATTEMPTS) {
+            lifecycle.scheduleRetry(recoveryAttempt)
+        } else {
+            Diagnostics.warn(
+                Event.SLEEP_RECOVERY,
+                null,
+                "stage" to "gave_up",
+                "attempts" to recoveryAttempt,
+            )
+        }
     }
 
     // ---------------------------------------------------------------- internals
@@ -151,6 +222,10 @@ class ConnectionManager(
         activeProfile = profile
         repository.setActive(profile.id)
         Diagnostics.event(Event.TUNNEL_START, "protocol" to profile.protocol, "profile" to profile.id)
+
+        // A new tunnel instance means fresh counter baselines.
+        traffic.startSession(profile.protocol)
+        startTrafficSampling()
 
         // Up, but not yet proven. Verify before showing "Connected".
         _state.value = ConnectionState.Verifying
@@ -259,6 +334,11 @@ class ConnectionManager(
         // the next start would collide with a zombie.
         withContext(Dispatchers.IO) { runCatching { wdttClient?.stop() } }
         wdttClient = null
+        // Release the traffic session and any scheduled recovery in one place, so no
+        // timer survives a disconnect and turns into a phantom reconnect later.
+        stopTrafficSampling()
+        lifecycle.cancelRetry()
+        recoveryAttempt = 0
         failover.onDisconnected()
         activeProfile = null
         repository.setActive(null)
@@ -307,6 +387,34 @@ class ConnectionManager(
         }
         Diagnostics.warn(Event.WDTT_ENGINE, null, "stage" to "no_traffic")
         return false
+    }
+
+    /**
+     * Samples engine counters every [TRAFFIC_INTERVAL_MS] while a session is active.
+     *
+     * Deliberately runs off the UI thread and only while connected: a 2 s tick with no
+     * session would wake the engine for nothing and drain battery.
+     */
+    private fun startTrafficSampling() {
+        trafficJob?.cancel()
+        trafficJob = scope.launch {
+            while (isActive) {
+                val eng = engine
+                if (eng == null) break
+                val ok = runCatching { eng.isUp() }.getOrDefault(false)
+                if (!ok) break
+                val c = withContext(Dispatchers.IO) { eng.counters() }
+                _traffic.value = traffic.sample(c.rxBytes, c.txBytes)
+                delay(TRAFFIC_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun stopTrafficSampling() {
+        trafficJob?.cancel()
+        trafficJob = null
+        traffic.endSession()
+        _traffic.value = TrafficSnapshot.Unavailable
     }
 
     private fun startMonitor(profile: VpnProfile) {
@@ -486,5 +594,11 @@ class ConnectionManager(
 
         /** One "still alive" log line per minute at most. */
         const val PROBE_HEARTBEAT_MS = 60_000L
+
+        /** Recovery is bounded: after this many failed attempts we stop and report. */
+        const val MAX_RECOVERY_ATTEMPTS = 6
+
+        /** Traffic UI refresh; 2 s is smooth enough and cheap enough for battery. */
+        const val TRAFFIC_INTERVAL_MS = 2_000L
     }
 }

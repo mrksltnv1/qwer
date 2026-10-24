@@ -9,6 +9,8 @@ import com.qwer.app.core.ProfileRepository
 import com.qwer.app.diagnostics.Diagnostics
 import com.qwer.app.diagnostics.Diagnostics.Event
 import com.qwer.app.engine.WdttPlusAdapter
+import com.qwer.app.service.VpnNotification
+import kotlinx.coroutines.launch
 
 /**
  * Holds the single [ConnectionManager] instance.
@@ -26,12 +28,28 @@ class QwerApplication : Application() {
     lateinit var wdtt: WdttPlusAdapter
         private set
 
+    private val applicationScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default,
+    )
+
     override fun onCreate() {
         super.onCreate()
         repository = ProfileRepository(this)
         wdtt = WdttPlusAdapter(this)
         connectionManager = ConnectionManager(this, repository, wdtt)
+        // Screen-on / wake / network-change watchers. Without this the app had no
+        // awareness of device lifecycle at all (root cause of "не восстанавливается
+        // после сна" in 0.8.4).
+        connectionManager.startLifecycleMonitoring()
         createNotificationChannel()
+
+        // One observer owns the status notification. It reads the same StateFlow the UI
+        // reads, so the shade can never disagree with the screen.
+        applicationScope.launch {
+            connectionManager.state.collect { st ->
+                VpnNotification.update(this@QwerApplication, st)
+            }
+        }
         Diagnostics.event(
             Event.APP_START,
             "sdk" to Build.VERSION.SDK_INT,
