@@ -26,8 +26,8 @@ android {
         applicationId = "com.qwer.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 880
-        versionName = "0.8.8"
+        versionCode = 890
+        versionName = "0.8.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

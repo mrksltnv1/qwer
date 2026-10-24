@@ -65,6 +65,17 @@ class NetworkLifecycleMonitor(private val context: Context) {
     private var receiver: BroadcastReceiver? = null
     private var retryJob: Job? = null
 
+    /**
+     * Filters connectivity callbacks down to real connection changes.
+     *
+     * onCapabilitiesChanged fires for ANY capability change — signal strength,
+     * bandwidth estimate, validation state — not only when the transport switches.
+     * On a real device that produced bursts of three NETWORK_CHANGED events within
+     * three seconds, each triggering a recovery probe. The gate is a pure class with
+     * its own tests, including a replay of that exact field-log sequence.
+     */
+    private val changeGate = NetworkChangeGate()
+
     /** True while the device is in an interactive (awake) state as far as we can tell. */
     @Volatile
     var screenInteractive: Boolean = true
@@ -114,7 +125,20 @@ class NetworkLifecycleMonitor(private val context: Context) {
                     caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
                     else -> "other"
                 }
-                Diagnostics.event(Event.NETWORK_EVENT, "kind" to "changed", "transport" to transport)
+
+                val previous = changeGate.currentTransport()
+                if (!changeGate.accept(transport, System.currentTimeMillis())) {
+                    // Same transport, or a transition inside the guard window: the
+                    // tunnel path did not really change, so no probe is needed.
+                    return
+                }
+
+                Diagnostics.event(
+                    Event.NETWORK_EVENT,
+                    "kind" to "changed",
+                    "transport" to transport,
+                    "from" to (previous ?: "none"),
+                )
                 _triggers.tryEmit(Trigger.NETWORK_CHANGED)
             }
         }
@@ -217,5 +241,6 @@ class NetworkLifecycleMonitor(private val context: Context) {
         const val MAX_BACKOFF_ATTEMPT = 5
         /** Never wait longer than this between recovery attempts. */
         const val RETRY_MAX_MS = 60_000L
+
     }
 }

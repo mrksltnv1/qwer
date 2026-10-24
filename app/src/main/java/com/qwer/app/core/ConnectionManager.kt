@@ -84,6 +84,17 @@ class ConnectionManager(
     /** Bounded recovery attempts since the last healthy connection. */
     private var recoveryAttempt = 0
 
+    /**
+     * Serializes lifecycle recovery work.
+     *
+     * FIELD EVIDENCE: a burst of NETWORK_CHANGED events (14:27:41-14:27:56) ran
+     * overlapping probes, each one resetting the retry counter and cancelling the
+     * previous retry job. The log shows `retry_scheduled attempt=1` four times in
+     * twelve seconds, then the tunnel was torn down. One trigger at a time, with the
+     * latest state re-read inside the lock, removes the race.
+     */
+    private val recoveryMutex = Mutex()
+
     /** Non-null only while an embedded WDTT client is running. */
     private var wdttClient: WdttClient? = null
 
@@ -143,6 +154,13 @@ class ConnectionManager(
      * a wake event cannot race a failover decision.
      */
     private suspend fun onLifecycleTrigger(trigger: NetworkLifecycleMonitor.Trigger) {
+        // Drop overlapping triggers instead of queueing them: the newest state is what
+        // matters, and a queue would just replay stale bursts.
+        if (!recoveryMutex.tryLock()) {
+            Diagnostics.event(Event.SLEEP_RECOVERY, "trigger" to trigger.name, "skipped" to "busy")
+            return
+        }
+        try {
         val current = _state.value
         if (current !is ConnectionState.Connected && current !is ConnectionState.Degraded) {
             // Not connected: nothing to recover. A pending connect is already in flight.
@@ -174,6 +192,9 @@ class ConnectionManager(
                 "stage" to "gave_up",
                 "attempts" to recoveryAttempt,
             )
+        }
+        } finally {
+            recoveryMutex.unlock()
         }
     }
 
