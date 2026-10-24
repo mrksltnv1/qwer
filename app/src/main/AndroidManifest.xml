@@ -102,6 +102,21 @@
                 <action android:name="com.qwer.app.action.RECONNECT" />
             </intent-filter>
         </receiver>
+
+        <!--
+          Holds the process in the foreground while a tunnel is up.
+          Without an FGS, Android freezes/kills the app soon after screen-off, which is
+          exactly why sleep recovery and the status notification never worked.
+        -->
+        <service
+            android:name=".service.ConnectionForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="vpn_connection_status_and_background_tunnel_keepalive" />
+        </service>
     </application>
+
 
 </manifest>

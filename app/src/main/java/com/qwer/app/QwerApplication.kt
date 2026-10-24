@@ -9,6 +9,7 @@ import com.qwer.app.core.ProfileRepository
 import com.qwer.app.diagnostics.Diagnostics
 import com.qwer.app.diagnostics.Diagnostics.Event
 import com.qwer.app.engine.WdttPlusAdapter
+import com.qwer.app.service.ConnectionForegroundService
 import com.qwer.app.service.VpnNotification
 import kotlinx.coroutines.launch
 
@@ -43,11 +44,15 @@ class QwerApplication : Application() {
         connectionManager.startLifecycleMonitoring()
         createNotificationChannel()
 
-        // One observer owns the status notification. It reads the same StateFlow the UI
-        // reads, so the shade can never disagree with the screen.
+        // The status notification is now owned by ConnectionForegroundService, which is
+        // the only component allowed to call startForeground(). Posting it here as well
+        // would duplicate the shade entry, so this observer only keeps the state in
+        // sync when the FGS is not running (e.g. after a cold start).
         applicationScope.launch {
             connectionManager.state.collect { st ->
-                VpnNotification.update(this@QwerApplication, st)
+                if (!ConnectionForegroundService.isRunning) {
+                    VpnNotification.update(this@QwerApplication, st)
+                }
             }
         }
         Diagnostics.event(
@@ -56,6 +61,25 @@ class QwerApplication : Application() {
             "profiles" to repository.all().size,
             "wdttInstalled" to wdtt.availability().installed,
         )
+    }
+
+    /**
+     * Called by [ConnectionForegroundService.onDestroy].
+     *
+     * If the system killed the foreground service the process is on borrowed time: a
+     * tunnel without a foreground guarantee will be frozen and its sockets will die.
+     * Rather than leave a half-alive tunnel that the UI still calls "Connected", we
+     * stop it and let the user (or a later wake) reconnect cleanly.
+     */
+    fun onForegroundServiceLost() {
+        Diagnostics.warn(Event.FOREGROUND_SERVICE, null, "stage" to "lost")
+        val st = connectionManager.state.value
+        if (st is com.qwer.app.core.ConnectionState.Connected ||
+            st is com.qwer.app.core.ConnectionState.Degraded ||
+            st is com.qwer.app.core.ConnectionState.Verifying
+        ) {
+            connectionManager.disconnect()
+        }
     }
 
     private fun createNotificationChannel() {

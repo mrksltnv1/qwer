@@ -3,6 +3,7 @@ package com.qwer.app.ui
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.Manifest
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -73,6 +74,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Android 13+ requires an explicit runtime grant for notifications. Without it the
+     * foreground service still runs (the tunnel stays alive) but its notification is
+     * silently dropped — which is exactly why the shade showed nothing while the app
+     * claimed to be connected.
+     */
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        Diagnostics.event(Event.FOREGROUND_SERVICE, "notif_permission" to granted)
+    }
+
+    private fun ensureNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return
+        val granted = checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     /** SAF picker for a .conf file. */
     private val pickConfigFile = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -109,6 +131,7 @@ class MainActivity : ComponentActivity() {
         refreshProfiles()
 
         handleIntent(intent)
+        ensureNotificationPermission()
 
         setContent {
             val state by app.connectionManager.state.collectAsStateWithLifecycle()
@@ -272,6 +295,7 @@ class MainActivity : ComponentActivity() {
 
     private fun requestConnect(profile: VpnProfile) {
         message = null
+        ensureNotificationPermission()
         val consent = app.connectionManager.vpnPermissionIntent()
         if (consent != null) {
             pendingProfileId = profile.id

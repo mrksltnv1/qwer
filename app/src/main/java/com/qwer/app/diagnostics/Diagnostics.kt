@@ -48,6 +48,7 @@ object Diagnostics {
         DEEPLINK_REJECTED,
         VPN_PERMISSION,
         TILE_ACTION,
+        FOREGROUND_SERVICE,
         NETWORK_EVENT,
         SLEEP_RECOVERY,
         TRAFFIC_SAMPLE,

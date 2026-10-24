@@ -14,6 +14,7 @@ import com.qwer.app.failover.FailoverController
 import com.qwer.app.failover.FailoverDecision
 import com.qwer.app.failover.HealthSample
 import com.qwer.app.health.ConnectivityProbe
+import com.qwer.app.service.ConnectionForegroundService
 import com.qwer.app.health.TcpProbe
 import com.qwer.app.wdtt.WdttClient
 import com.qwer.app.wdtt.WdttLink
@@ -204,6 +205,9 @@ class ConnectionManager(
         if (engine?.isUp() == true) stopTunnelLocked("before-start")
 
         _state.value = ConnectionState.Connecting
+        // Foreground guarantee: without it Android freezes the process after screen-off
+        // and neither sleep recovery nor the status notification can ever run.
+        withContext(Dispatchers.Main) { ConnectionForegroundService.start(context) }
         val started = withContext(Dispatchers.IO) {
             runCatching {
                 val eng = engine ?: engineFactory(context).also { engine = it }
@@ -267,6 +271,7 @@ class ConnectionManager(
         if (engine?.isUp() == true) stopTunnelLocked("before-start")
 
         _state.value = ConnectionState.Connecting
+        withContext(Dispatchers.Main) { ConnectionForegroundService.start(context) }
         val client = wdttClient ?: WdttClient(context).also { wdttClient = it }
 
         val config = when (val res = client.start(parsed)) {
@@ -351,6 +356,7 @@ class ConnectionManager(
         repository.setActive(null)
         if (had) Diagnostics.event(Event.TUNNEL_STOP, "reason" to reason)
         _state.value = ConnectionState.Disconnected
+        withContext(Dispatchers.Main) { ConnectionForegroundService.stop(context) }
     }
 
     /**

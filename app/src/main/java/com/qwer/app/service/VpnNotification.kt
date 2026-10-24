@@ -88,8 +88,13 @@ object VpnNotification {
         Protocol.WDTT_PLUS -> "WDTT"
     }
 
-    /** Posts or updates the notification to match [state]. */
-    fun update(context: Context, state: ConnectionState) {
+    /**
+     * Builds the notification for [state] WITHOUT posting it.
+     *
+     * Needed by [ConnectionForegroundService]: startForeground() requires a
+     * Notification object, and posting it separately would duplicate the entry.
+     */
+    fun build(context: Context, state: ConnectionState): Notification {
         val c = content(state)
         val builder = NotificationCompat.Builder(context, QwerApplication.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_tile_vpn)
@@ -100,6 +105,12 @@ object VpnNotification {
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(openAppIntent(context))
+
+        // Android 12+ defers FGS notifications by 10 s by default, which made the
+        // status invisible for the first seconds of every connection.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        }
 
         when (state) {
             is ConnectionState.Connected -> builder.addAction(
@@ -118,9 +129,13 @@ object VpnNotification {
             builder.setCategory(NotificationCompat.CATEGORY_SERVICE)
         }
 
-        val notification: Notification = builder.build()
+        return builder.build()
+    }
+
+    /** Posts or updates the notification to match [state]. */
+    fun update(context: Context, state: ConnectionState) {
         runCatching {
-            NotificationManagerCompat.from(context).notify(ID, notification)
+            NotificationManagerCompat.from(context).notify(ID, build(context, state))
         }
     }
 
