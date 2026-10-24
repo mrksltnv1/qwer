@@ -48,6 +48,8 @@ object Diagnostics {
         DEEPLINK_REJECTED,
         VPN_PERMISSION,
         TILE_ACTION,
+        DEVICE_DIAGNOSTICS,
+        BACKUP,
         FOREGROUND_SERVICE,
         NETWORK_EVENT,
         SLEEP_RECOVERY,

@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.qwer.app.BuildConfig
+import com.qwer.app.backup.BackupManager
 import com.qwer.app.QwerApplication
 import com.qwer.app.config.ConfigImporter
 import com.qwer.app.config.FileConfigReader
@@ -26,6 +27,8 @@ import com.qwer.app.config.ImportResult
 import com.qwer.app.core.Protocol
 import com.qwer.app.core.VpnProfile
 import com.qwer.app.deeplink.DeepLinkHandler
+import com.qwer.app.device.DiagnosticEngine
+import com.qwer.app.device.DiagnosticReport
 import com.qwer.app.diagnostics.Diagnostics
 import com.qwer.app.diagnostics.Diagnostics.Event
 import com.qwer.app.update.UpdateChecker
@@ -35,6 +38,8 @@ import com.qwer.app.update.UpdateUiState
 import com.qwer.app.wdtt.WdttLink
 import com.qwer.app.wdtt.WdttParseResult
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import java.io.File
 
 /**
@@ -54,6 +59,15 @@ class MainActivity : ComponentActivity() {
     private var importError by mutableStateOf<String?>(null)
 
     private var updateState by mutableStateOf<UpdateUiState>(UpdateUiState.Idle)
+
+    // Diagnostics state lives here, not in the composable: a rotation must not throw
+    // away a finished report and re-run DNS probes.
+    private var diagnosticReport by mutableStateOf<DiagnosticReport?>(null)
+    private var diagnosticsRunning by mutableStateOf(false)
+    private lateinit var diagnosticEngine: DiagnosticEngine
+    private lateinit var backupManager: BackupManager
+    private var backupStatus by mutableStateOf<String?>(null)
+    private var backupPreview by mutableStateOf<BackupManager.PreviewResult?>(null)
     private var profilesState by mutableStateOf<List<VpnProfile>>(emptyList())
     private var activeIdState by mutableStateOf<String?>(null)
 
@@ -126,6 +140,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        diagnosticEngine = DiagnosticEngine(this)
+        backupManager = BackupManager(app.repository)
         updateChecker = UpdateChecker(currentVersionCode = BuildConfig.VERSION_CODE)
         updateInstaller = UpdateInstaller(this)
         refreshProfiles()
@@ -147,6 +163,20 @@ class MainActivity : ComponentActivity() {
                     AppTab.LOGS -> LogsScreen(
                         onClose = { tab = AppTab.HOME },
                         onClear = { Diagnostics.clear() },
+                    )
+                    AppTab.DIAGNOSTICS -> DiagnosticsScreen(
+                        report = diagnosticReport,
+                        isRunning = diagnosticsRunning,
+                        onRun = { runDiagnostics() },
+                        onClose = { tab = AppTab.HOME },
+                    )
+                    AppTab.BACKUP -> BackupScreen(
+                        onClose = { tab = AppTab.HOME },
+                        onExport = { pw, uri -> exportBackup(pw, uri) },
+                        onPreview = { uri, pw -> previewBackup(uri, pw) },
+                        onImport = { uri, pw, mode -> importBackup(uri, pw, mode) },
+                        statusMessage = backupStatus,
+                        preview = backupPreview,
                     )
                     AppTab.HOME -> MainScreen(
                     state = state,
@@ -291,6 +321,119 @@ class MainActivity : ComponentActivity() {
     private fun refreshProfiles() {
         profilesState = app.repository.all()
         activeIdState = app.repository.activeProfile()?.id
+    }
+
+    /**
+     * Runs the device diagnostic off the main thread and publishes the result.
+     *
+     * Guarded by [diagnosticsRunning] so a double tap cannot start two runs; failures
+     * are contained inside DiagnosticEngine, so this coroutine cannot crash the UI.
+     */
+    /**
+     * Writes the encrypted backup to the URI the user picked.
+     *
+     * The password char array is zeroed after use; it is never held in a String field,
+     * never logged and never placed in saved state.
+     */
+    private fun exportBackup(password: CharArray, uri: android.net.Uri) {
+        lifecycleScope.launch {
+            backupStatus = null
+            try {
+                val result = withContext(Dispatchers.IO) { backupManager.export(password) }
+                when (result) {
+                    is BackupManager.ExportResult.Failed -> backupStatus = result.message
+                    is BackupManager.ExportResult.Ok -> {
+                        val written = withContext(Dispatchers.IO) {
+                            runCatching {
+                                contentResolver.openOutputStream(uri)?.use { it.write(result.bytes) }
+                                    ?: error("no stream")
+                            }.isSuccess
+                        }
+                        backupStatus = if (written) {
+                            "Резервная копия создана: ${result.profileCount} профилей"
+                        } else {
+                            "Не удалось записать файл"
+                        }
+                    }
+                }
+            } finally {
+                password.fill('\u0000')
+            }
+        }
+    }
+
+    /** Decrypts and previews without touching stored profiles. */
+    private fun previewBackup(uri: android.net.Uri, password: CharArray) {
+        lifecycleScope.launch {
+            backupPreview = null
+            backupStatus = null
+            try {
+                val bytes = withContext(Dispatchers.IO) { readAll(uri) }
+                if (bytes == null) {
+                    backupStatus = "Не удалось прочитать файл"
+                    return@launch
+                }
+                backupPreview = withContext(Dispatchers.IO) { backupManager.preview(bytes, password) }
+            } finally {
+                password.fill('\u0000')
+            }
+        }
+    }
+
+    private fun importBackup(
+        uri: android.net.Uri,
+        password: CharArray,
+        mode: BackupManager.ImportMode,
+    ) {
+        lifecycleScope.launch {
+            backupStatus = null
+            try {
+                val bytes = withContext(Dispatchers.IO) { readAll(uri) }
+                if (bytes == null) {
+                    backupStatus = "Не удалось прочитать файл"
+                    return@launch
+                }
+                val result = withContext(Dispatchers.IO) { backupManager.import(bytes, password, mode) }
+                backupPreview = null
+                backupStatus = when (result) {
+                    is BackupManager.ImportResult.Failed -> result.message
+                    is BackupManager.ImportResult.Ok -> buildString {
+                        append("Восстановлено: добавлено ${result.added}")
+                        if (result.replaced > 0) append(", заменено ${result.replaced}")
+                        if (result.skipped > 0) append(", пропущено ${result.skipped}")
+                    }
+                }
+                refreshProfiles()
+            } finally {
+                password.fill('\u0000')
+            }
+        }
+    }
+
+    /** Bounded read: a hostile file must not be pulled into memory whole. */
+    private fun readAll(uri: android.net.Uri): ByteArray? = runCatching {
+        contentResolver.openInputStream(uri)?.use { input ->
+            val buf = ByteArray(com.qwer.app.backup.BackupCodec.MAX_FILE_BYTES + 1)
+            var total = 0
+            while (total < buf.size) {
+                val n = input.read(buf, total, buf.size - total)
+                if (n <= 0) break
+                total += n
+            }
+            if (total > com.qwer.app.backup.BackupCodec.MAX_FILE_BYTES) null else buf.copyOf(total)
+        }
+    }.getOrNull()
+
+    private fun runDiagnostics() {
+        if (diagnosticsRunning) return
+        diagnosticsRunning = true
+        lifecycleScope.launch {
+            try {
+                diagnosticReport = diagnosticEngine.run()
+            } finally {
+                diagnosticsRunning = false
+            }
+        }
     }
 
     private fun requestConnect(profile: VpnProfile) {

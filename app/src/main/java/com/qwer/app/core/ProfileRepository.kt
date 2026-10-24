@@ -83,6 +83,26 @@ class ProfileRepository(
         if (prefs.getString(KEY_ACTIVE, null) == id) setActive(null)
     }
 
+    /**
+     * Atomically replaces the whole profile set plus configs.
+     *
+     * Used only by backup restore. Kept as ONE call so a failure cannot leave a
+     * half-restored device: either the new list and its configs are written, or the
+     * previous state stays untouched.
+     */
+    fun replaceAll(profiles: List<VpnProfile>, configs: Map<String, String>) {
+        // Persist metadata first. If this throws, nothing below runs and the old list
+        // is still in place.
+        persist(profiles)
+        // Then write secrets. A failure here is reported by the caller; the profile
+        // list is already consistent with the backup, and a missing config surfaces as
+        // "re-import needed" instead of a phantom connection.
+        configs.forEach { (id, raw) -> configStore.putConfig(id, raw) }
+        // Drop configs for profiles that no longer exist, so secrets do not linger.
+        val keep = profiles.map { it.id }.toSet()
+        all().map { it.id }.filter { it !in keep }.forEach { configStore.removeConfig(it) }
+    }
+
     fun configFor(id: String): String? = configStore.getConfig(id)
 
     /** True when a profile exists but its secret could not be decrypted (re-import needed). */
@@ -101,6 +121,7 @@ class ProfileRepository(
         put("endpoint", p.endpointSummary ?: "")
         put("created", p.createdAtMillis)
         put("failover", p.isFailoverTarget)
+        RoutingInjector.toJson(p.appRouting, this)
     }
 
     private fun fromJson(o: JSONObject) = VpnProfile(
@@ -111,6 +132,7 @@ class ProfileRepository(
         endpointSummary = o.optString("endpoint").takeIf { it.isNotBlank() },
         createdAtMillis = o.optLong("created", 0L),
         isFailoverTarget = o.optBoolean("failover", false),
+        appRouting = RoutingInjector.fromJson(o),
     )
 
     private companion object {

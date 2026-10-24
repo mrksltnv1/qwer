@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qwer.app.diagnostics.Diagnostics
+import com.qwer.app.diagnostics.LogGrouper
 import kotlinx.coroutines.delay
 
 /**
@@ -64,6 +65,14 @@ fun LogsScreen(
     val clipboard = LocalClipboardManager.current
     var lines by remember { mutableStateOf(Diagnostics.snapshot()) }
     var copied by remember { mutableStateOf(false) }
+    // Grouping is on by default because the field log showed runs of identical events
+    // pushing real transitions off-screen. The toggle keeps the raw order available.
+    var groupRepeats by remember { mutableStateOf(true) }
+    val groups = remember(lines, groupRepeats) {
+        if (groupRepeats) LogGrouper.group(lines) else lines.map {
+            LogGrouper.Group(1, LogGrouper.timestampOf(it), LogGrouper.timestampOf(it), it)
+        }
+    }
     // Re-read on a timer so the view stays live while a connection is being attempted.
     var tick by remember { mutableIntStateOf(0) }
 
@@ -82,7 +91,11 @@ fun LogsScreen(
                 Column(Modifier.weight(1f)) {
                     Text("Логи", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "${lines.size} записей · только в памяти",
+                        if (groupRepeats && groups.size != lines.size) {
+                            "${lines.size} записей · ${groups.size} строк"
+                        } else {
+                            "${lines.size} записей · только в памяти"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -168,9 +181,9 @@ fun LogsScreen(
                 }
             } else {
                 val listState = rememberLazyListState()
-                // Auto-scroll to the newest line, like a terminal.
-                LaunchedEffect(lines.size) {
-                    if (lines.isNotEmpty()) listState.animateScrollToItem(lines.size - 1)
+                // Auto-scroll to the newest group, like a terminal.
+                LaunchedEffect(groups.size) {
+                    if (groups.isNotEmpty()) listState.animateScrollToItem(groups.size - 1)
                 }
                 Card(
                     modifier = Modifier.fillMaxWidth().weight(1f),
@@ -183,20 +196,40 @@ fun LogsScreen(
                         state = listState,
                         modifier = Modifier.fillMaxSize().padding(12.dp),
                     ) {
-                        items(lines) { line ->
-                            Text(
-                                text = line,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp,
-                                    lineHeight = 15.sp,
-                                ),
-                                color = if (line.contains("!")) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                            )
+                        items(groups) { group ->
+                            Row(verticalAlignment = Alignment.Top) {
+                                Text(
+                                    text = group.line,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        lineHeight = 15.sp,
+                                    ),
+                                    color = if (group.line.contains("!")) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                                if (group.isRepeated) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = "×${group.count}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                            if (group.isRepeated && group.firstTimestamp != null &&
+                                group.lastTimestamp != group.firstTimestamp
+                            ) {
+                                Text(
+                                    text = "  ${group.firstTimestamp} … ${group.lastTimestamp}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }

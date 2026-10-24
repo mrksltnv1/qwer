@@ -84,6 +84,9 @@ class ConnectionManager(
     /** Bounded recovery attempts since the last healthy connection. */
     private var recoveryAttempt = 0
 
+    /** Last successfully read engine counters, used when a sample is unreadable. */
+    private var lastCounters = com.qwer.app.engine.TunnelEngine.Counters(0, 0)
+
     /**
      * Serializes lifecycle recovery work.
      *
@@ -94,6 +97,15 @@ class ConnectionManager(
      * latest state re-read inside the lock, removes the race.
      */
     private val recoveryMutex = Mutex()
+
+    /**
+     * Generation guard against stale operations.
+     *
+     * Coroutine cancellation is cooperative: the engine call may already be running on a
+     * native thread and return later. Without this, an old start could write `Connected`
+     * after a newer stop, or resurrect a tunnel the user closed.
+     */
+    private val opGate = OperationGate()
 
     /** Non-null only while an embedded WDTT client is running. */
     private var wdttClient: WdttClient? = null
@@ -201,6 +213,7 @@ class ConnectionManager(
     // ---------------------------------------------------------------- internals
 
     private suspend fun connectInternal(profileId: String) = mutex.withLock {
+        val ticket = opGate.begin()
         val profile = repository.find(profileId) ?: run {
             _state.value = ConnectionState.Failed(FailureReason.NO_PROFILE)
             return@withLock
@@ -229,18 +242,40 @@ class ConnectionManager(
         // Foreground guarantee: without it Android freezes the process after screen-off
         // and neither sleep recovery nor the status notification can ever run.
         withContext(Dispatchers.Main) { ConnectionForegroundService.start(context) }
+        // Per-app routing is expressed as ExcludedApplications/IncludedApplications
+        // lines in the [Interface] section. Applying it here keeps the engine untouched
+        // and preserves the raw config stored in the Keystore.
+        val routingLines = AppRouting.configLines(profile.appRouting)
+        val routedConfig = if (routingLines.isEmpty()) raw else RoutingInjector.apply(raw, routingLines)
+        if (routingLines.isNotEmpty()) {
+            Diagnostics.event(
+                Event.TUNNEL_START,
+                "routing_apps" to AppRouting.selectedCount(profile.appRouting),
+            )
+        }
+
         val started = withContext(Dispatchers.IO) {
             runCatching {
                 val eng = engine ?: engineFactory(context).also { engine = it }
-                eng.up(raw, tunnelName = TUNNEL_NAME)
+                eng.up(routedConfig, tunnelName = TUNNEL_NAME)
             }
         }
         started.exceptionOrNull()?.let { err ->
             Diagnostics.warn(Event.TUNNEL_START_FAILED, err, "protocol" to profile.protocol)
             _state.value = ConnectionState.Failed(
                 FailureReason.ENGINE_ERROR,
-                humanEngineError(err),
+                engineFailure(err).userMessage(),
             )
+            return@withLock
+        }
+
+        // A stale start must not claim the tunnel. If a newer command (stop or another
+        // profile) ran while the engine was coming up, we tear down what we started.
+        if (!opGate.isCurrent(ticket)) {
+            Diagnostics.event(Event.TUNNEL_STOP, "reason" to "stale_start", "profile" to profile.id)
+            withContext(Dispatchers.IO) { runCatching { engine?.down() } }
+            engine = null
+            withContext(Dispatchers.Main) { ConnectionForegroundService.stop(context) }
             return@withLock
         }
 
@@ -280,6 +315,7 @@ class ConnectionManager(
      * 127.0.0.1:<local>; we then bring it up with the same engine used for WG/AWG.
      */
     private suspend fun connectWdttLocked(profile: VpnProfile, link: String) {
+        val ticket = opGate.begin()
         val parsed = when (val r = WdttLink.parse(link)) {
             is WdttParseResult.Valid -> r.link
             is WdttParseResult.Invalid -> {
@@ -324,7 +360,17 @@ class ConnectionManager(
             Diagnostics.warn(Event.TUNNEL_START_FAILED, err, "protocol" to profile.protocol)
             withContext(Dispatchers.IO) { runCatching { client.stop() } }
             wdttClient = null
-            _state.value = ConnectionState.Failed(FailureReason.ENGINE_ERROR, humanEngineError(err))
+            _state.value = ConnectionState.Failed(FailureReason.ENGINE_ERROR, engineFailure(err).userMessage())
+            return
+        }
+
+        if (!opGate.isCurrent(ticket)) {
+            Diagnostics.event(Event.TUNNEL_STOP, "reason" to "stale_start_wdtt")
+            withContext(Dispatchers.IO) { runCatching { engine?.down() } }
+            engine = null
+            withContext(Dispatchers.IO) { runCatching { client.stop() } }
+            wdttClient = null
+            withContext(Dispatchers.Main) { ConnectionForegroundService.stop(context) }
             return
         }
 
@@ -358,6 +404,9 @@ class ConnectionManager(
     }
 
     private suspend fun withLockStop(reason: String) {
+        // Invalidate first: any operation still in flight becomes stale immediately and
+        // will roll back its own resources instead of publishing state.
+        opGate.invalidate()
         monitorJob?.cancel()
         monitorJob = null
         val had = engine != null || wdttClient != null
@@ -410,7 +459,11 @@ class ConnectionManager(
         val deadline = clock() + timeoutMillis
         var baseline = -1L
         while (clock() < deadline) {
-            val c = withContext(Dispatchers.IO) { eng.counters() }
+            // A null reading means the engine could not be queried. Treating it as
+            // zero would look like "tunnel is up but idle" and delay a real diagnosis,
+            // so we simply skip this tick and keep waiting for a readable sample.
+            val c = withContext(Dispatchers.IO) { eng.countersOrNull() }
+                ?: run { delay(700); continue }
             if (baseline < 0) {
                 baseline = c.rxBytes
             } else if (c.rxBytes - baseline >= 256) {
@@ -437,8 +490,14 @@ class ConnectionManager(
                 if (eng == null) break
                 val ok = runCatching { eng.isUp() }.getOrDefault(false)
                 if (!ok) break
-                val c = withContext(Dispatchers.IO) { eng.counters() }
-                _traffic.value = traffic.sample(c.rxBytes, c.txBytes)
+                val c = withContext(Dispatchers.IO) { eng.countersOrNull() }
+                if (c == null) {
+                    // Engine is up but statistics are unreadable: publish Unavailable so
+                    // the UI says "нет данных" instead of showing a fake 0 B.
+                    _traffic.value = com.qwer.app.core.TrafficSnapshot.Unavailable
+                } else {
+                    _traffic.value = traffic.sample(c.rxBytes, c.txBytes)
+                }
                 delay(TRAFFIC_INTERVAL_MS)
             }
         }
@@ -466,9 +525,14 @@ class ConnectionManager(
                     break
                 }
                 val ok = withContext(Dispatchers.IO) { probe.probe() }
-                val counters = withContext(Dispatchers.IO) { eng.counters() }
+                // The failover heuristic compares counter deltas; a null reading must
+                // not be mistaken for "traffic stopped", so we fall back to the last
+                // known values and let the probe drive the decision.
+                val counters = withContext(Dispatchers.IO) { eng.countersOrNull() }
+                    ?: lastCounters
                 val now = clock()
 
+                lastCounters = counters
                 if (!ok) consecutive++ else consecutive = 0
                 // A line every probe interval (~2.5 s) filled the whole 500-line buffer
                 // with "ok=true" and pushed out the events that actually matter.
@@ -581,44 +645,33 @@ class ConnectionManager(
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
-    private fun humanEngineError(err: Throwable): String {
-        // The AmneziaWG engine throws BackendException with a machine-readable Reason.
-        // Showing only "engine error" is useless for support, so map every reason to a
-        // concrete, actionable sentence. Reflection is avoided: the engine AAR is a
-        // compile-time dependency, so we can reference the type directly.
-        val reason = runCatching {
-            (err as? org.amnezia.awg.backend.BackendException)?.reason?.name
-        }.getOrNull()
-
-        val byReason = when (reason) {
-            "VPN_NOT_AUTHORIZED" -> "Нет разрешения Android на VPN"
-            "TUNNEL_MISSING_CONFIG" -> "Конфигурация не найдена"
-            "UNABLE_TO_START_VPN" -> "Не удалось поднять VPN-сервис"
-            "TUN_CREATION_ERROR" -> "Не удалось создать сетевой интерфейс"
-            "DNS_RESOLUTION_FAILURE" -> "Не удалось разрешить адрес сервера"
-            "GO_ACTIVATION_ERROR_CODE" -> {
-                val code = runCatching {
-                    (err as org.amnezia.awg.backend.BackendException).format.firstOrNull()?.toString()
-                }.getOrNull()
-                "Движок отказал при запуске (код $code)"
-            }
-            "AWG_QUICK_CONFIG_ERROR_CODE" -> "awg-quick не принял конфигурацию"
-            "UNKNOWN_KERNEL_MODULE_NAME" -> "Ядро не поддерживает AmneziaWG"
-            else -> null
-        }
-        if (byReason != null) return byReason
-
-        val msg = err.message.orEmpty()
-        return when {
-            msg.contains("VPN_NOT_AUTHORIZED", ignoreCase = true) ->
-                "Нет разрешения Android на VPN"
-            msg.contains("BadConfig", ignoreCase = true) ||
-                msg.contains("Bad configuration", ignoreCase = true) ->
-                "Движок отклонил конфигурацию: ${msg.take(120)}"
-            msg.isNotBlank() -> "Не удалось запустить туннель: ${msg.take(120)}"
-            else -> "Не удалось запустить туннель"
-        }
+    /**
+     * Converts an engine exception into a structured failure.
+     *
+     * The engine AAR is a compile-time dependency, so `BackendException.Reason` is read
+     * directly instead of by reflection. The reason NAME (a stable string) is what gets
+     * classified, which keeps EngineErrorMapper pure and unit-testable.
+     */
+    private fun engineFailure(err: Throwable): EngineFailure {
+        val backend = err as? org.amnezia.awg.backend.BackendException
+        val reasonName = backend?.reason?.name
+        val formatArg = backend?.format?.firstOrNull()?.toString()
+        val failure = EngineErrorMapper.fromReasonCode(
+            reasonCode = reasonName,
+            rawMessage = err.message,
+            formatArg = formatArg,
+        )
+        // The whole failure is logged once, with its stage, so a support ticket can be
+        // matched to a code even when the user only sends a screenshot.
+        Diagnostics.warn(
+            Event.TUNNEL_START_FAILED,
+            err,
+            "stage" to failure.stage.name.lowercase(),
+            "code" to failure.code,
+        )
+        return failure
     }
+
 
     /** Called from Application.onTerminate is unreliable; used by tests and shutdown. */
     fun shutdown() {

@@ -19,6 +19,11 @@ data class VpnProfile(
     val createdAtMillis: Long = System.currentTimeMillis(),
     /** True if this profile is the designated failover target. */
     val isFailoverTarget: Boolean = false,
+    /**
+     * Per-app routing. Defaults to [AppRouting.All], so every profile created before this
+     * field existed keeps behaving exactly as before — no migration needed.
+     */
+    val appRouting: AppRouting = AppRouting.All,
 ) {
     /** Non-secret description safe for logs and diagnostics. */
     fun safeLabel(): String = "$name (${protocol.displayName})"

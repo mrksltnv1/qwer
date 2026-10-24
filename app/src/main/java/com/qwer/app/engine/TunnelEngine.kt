@@ -75,11 +75,22 @@ class TunnelEngine(private val context: Context) : AutoCloseable {
     /** Byte counters for the active tunnel; both zero when nothing is running. */
     data class Counters(val rxBytes: Long, val txBytes: Long)
 
-    fun counters(): Counters = runCatching {
-        val tunnel = current ?: return Counters(0, 0)
+    /**
+     * Engine byte counters, or null when they genuinely cannot be read.
+     *
+     * WHY NULL AND NOT ZERO: `Counters(0, 0)` is indistinguishable from "the tunnel is up
+     * and idle". The UI would then show 0 B for a tunnel that may actually be dead —
+     * exactly the kind of fake success this app must avoid. Null means "unknown", and
+     * the caller renders "нет данных".
+     */
+    fun countersOrNull(): Counters? = runCatching {
+        val tunnel = current ?: return null
         val stats = backend.getStatistics(tunnel)
         Counters(stats.totalRx(), stats.totalTx())
-    }.getOrElse { Counters(0, 0) }
+    }.getOrNull()
+
+    /** Non-null wrapper kept for call sites that only need a byte delta. */
+    fun counters(): Counters = countersOrNull() ?: Counters(0, 0)
 
     /** Epoch millis of the last successful handshake, or null when unknown. */
     fun lastHandshakeMillis(): Long? = runCatching {
