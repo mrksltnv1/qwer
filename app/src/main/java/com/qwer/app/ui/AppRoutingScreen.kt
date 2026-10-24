@@ -1,5 +1,7 @@
 package com.qwer.app.ui
 
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,11 +9,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
@@ -21,6 +26,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -48,6 +54,7 @@ import com.qwer.app.device.InstalledApps
  * The list is searchable because a real phone has 60-150 launchable apps and scrolling
  * to find one is worse than typing three letters.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AppRoutingScreen(
     apps: List<InstalledApps.Entry>,
@@ -74,6 +81,9 @@ fun AppRoutingScreen(
         )
     }
     var query by remember { mutableStateOf("") }
+    // Feedback for the quick-exclusion action. Shown instead of the generic hint after a
+    // tap so the user sees that something happened even when the list is scrolled away.
+    var quickAddedMessage by remember { mutableStateOf<String?>(null) }
 
     val visible = remember(apps, query) {
         if (query.isBlank()) {
@@ -93,6 +103,7 @@ fun AppRoutingScreen(
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f),
                 maxLines = 1,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis,
             )
             IconButton(onClick = onClose) {
@@ -101,21 +112,37 @@ fun AppRoutingScreen(
         }
 
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        /*
+         * The three mode chips used to sit in one Row. With "Только выбранные" their
+         * combined intrinsic width exceeded a 360dp screen, so the last chip was clipped
+         * and its label wrapped mid-word. FlowRow lets them fall onto a second line
+         * instead of compressing the text.
+         */
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             FilterChip(
                 selected = mode == RoutingMode.ALL,
                 onClick = { mode = RoutingMode.ALL },
-                label = { Text("Всё", maxLines = 1) },
+                label = { Text("Всё", maxLines = 1, softWrap = false) },
             )
             FilterChip(
                 selected = mode == RoutingMode.ONLY,
                 onClick = { mode = RoutingMode.ONLY },
-                label = { Text("Только выбранные", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                label = {
+                    Text(
+                        "Только выбранные",
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
             )
             FilterChip(
                 selected = mode == RoutingMode.EXCEPT,
                 onClick = { mode = RoutingMode.EXCEPT },
-                label = { Text("Все кроме", maxLines = 1) },
+                label = { Text("Все кроме", maxLines = 1, softWrap = false) },
             )
         }
 
@@ -161,28 +188,64 @@ fun AppRoutingScreen(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
+                    maxLines = 1,
                 )
-                // Fast exclusions only make sense in blacklist mode: in "только
-                // выбранные" the same list would mean the opposite thing.
-                if (mode == RoutingMode.EXCEPT) {
-                    TextButton(
-                        onClick = {
-                            val candidates = QuickExclusions.filter(
-                                apps.map { it.label to it.packageName },
-                            ).map { it.second }.toSet()
-                            // Merge, never replace: the user's own choices must survive.
-                            selected = selected + candidates
-                        },
-                    ) {
-                        Text("Быстрые исключения", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
             }
+            //
+            // WHY A FULL-WIDTH BUTTON AND NOT A LINK IN THE COUNTER ROW:
+            // the feature was implemented but shipped as a TextButton squeezed next to
+            // "Выбрано: N" inside a conditional that only rendered in "Все кроме" mode.
+            // The user reported it as "ты не добавил быстрые исключения" — it was there,
+            // just invisible. A button that fills the row cannot be missed.
             if (mode == RoutingMode.EXCEPT) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        val candidates = QuickExclusions
+                            .filter(apps.map { it.label to it.packageName })
+                            .map { it.second }
+                            .toSet()
+                        // Count BEFORE merging: the message must say what the tap added,
+                        // not how large the list became.
+                        val added = (candidates - selected).size
+                        // Merge, never replace: the user's own choices must survive.
+                        selected = selected + candidates
+                        quickAddedMessage = when {
+                            added > 0 -> "Добавлено приложений: $added"
+                            candidates.isEmpty() ->
+                                "Подходящих приложений не найдено среди установленных"
+                            else -> "Все подходящие приложения уже выбраны"
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(
+                        Icons.Filled.Bolt,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Быстрые исключения",
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                // Captured into a local: a delegated `var` cannot be smart-cast, so
+                // reading it twice inside an if/else failed to compile.
+                val hint = quickAddedMessage
                 Text(
-                    "Найдёт банки, госуслуги, маркетплейсы и операторов связи среди установленных.",
+                    if (hint != null) {
+                        hint
+                    } else {
+                        "Добавит банки, госуслуги, маркетплейсы и операторов связи из установленных."
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Spacer(Modifier.height(6.dp))

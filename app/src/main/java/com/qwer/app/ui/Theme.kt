@@ -66,33 +66,31 @@ private val DarkColors = darkColorScheme(
 )
 
 /**
- * Type scale.
- *
- * The previous scale was tuned on one phone and fell apart on others: 11-12.5sp body
- * text is below Android's recommended minimum for Cyrillic, and on a high-density panel
- * with a large system font setting it either overflowed its row or shrank visually.
+ * The scale is deliberately one step tighter than stock Material. The previous revision
+ * raised every size to fix unreadable 11sp text, and the pendulum swung too far: an
+ * 22sp screen title over a 360dp-wide screen wrapped mid-word, and "Конфигурации" at
+ * 17sp dominated the list it was labelling.
  *
  * Rules applied here:
- *  - nothing below 12sp, and nothing informational below 13sp;
- *  - body text 15sp, which is the Material default for a reason — it stays legible at
- *    411dp width without wrapping Russian words mid-syllable;
- *  - lineHeight is set explicitly for the small styles, because the default 1.2 ratio
- *    makes two-line hints collide on a 3x-density screen;
- *  - sizes are in sp, so the system font-size slider scales the whole app. Any fixed
- *    dp height around text was removed for the same reason.
+ *  - screen titles 18sp: fits "Маршрутизация" on one line at 360dp;
+ *  - section headers 14sp semibold, one step below a title — a label, not a heading;
+ *  - body 14sp, small print 13sp; nothing informational below 11.5sp;
+ *  - lineHeight set explicitly everywhere, because the default 1.2 ratio collides on
+ *    two-line Russian labels at 3x density;
+ *  - sizes are in sp, so the system font-size slider scales the whole app.
  */
 private val AppTypography = Typography(
-    displaySmall = TextStyle(fontSize = 34.sp, lineHeight = 40.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp),
-    headlineMedium = TextStyle(fontSize = 26.sp, lineHeight = 32.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.3).sp),
-    titleLarge = TextStyle(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold),
-    titleMedium = TextStyle(fontSize = 17.sp, lineHeight = 23.sp, fontWeight = FontWeight.SemiBold),
-    titleSmall = TextStyle(fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium),
-    bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 23.sp),
-    bodyMedium = TextStyle(fontSize = 15.sp, lineHeight = 21.sp),
-    bodySmall = TextStyle(fontSize = 13.5.sp, lineHeight = 19.sp),
-    labelLarge = TextStyle(fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium),
-    labelMedium = TextStyle(fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium),
-    labelSmall = TextStyle(fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.2.sp),
+    displaySmall = TextStyle(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.4).sp),
+    headlineMedium = TextStyle(fontSize = 21.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp),
+    titleLarge = TextStyle(fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold),
+    titleMedium = TextStyle(fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold),
+    titleSmall = TextStyle(fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold),
+    bodyLarge = TextStyle(fontSize = 15.sp, lineHeight = 21.sp),
+    bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 20.sp),
+    bodySmall = TextStyle(fontSize = 13.sp, lineHeight = 18.sp),
+    labelLarge = TextStyle(fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Medium),
+    labelMedium = TextStyle(fontSize = 12.5.sp, lineHeight = 17.sp, fontWeight = FontWeight.Medium),
+    labelSmall = TextStyle(fontSize = 11.5.sp, lineHeight = 15.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.2.sp),
 )
 
 @Composable

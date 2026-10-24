@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -226,6 +228,32 @@ fun MainScreen(
             onDismiss = onDismissImport,
             onConfirm = onConfirmImport,
             onPickFile = onPickFile,
+        )
+    }
+}
+
+/**
+ * Compact action button for the configuration header.
+ *
+ * WHY NOT TextButton: its default content padding (12dp horizontal each side) plus the
+ * minimum touch target left ~40dp for the label, so "Вставить" was broken into
+ * "Вста"/"вить" inside a Row that also held a title and two other buttons.
+ * Explicit small padding, a fixed minimum width of 44dp (still a valid touch target
+ * height) and softWrap = false keep every label on one line.
+ */
+@Composable
+private fun ImportChip(label: String, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+        modifier = Modifier.defaultMinSize(minWidth = 44.dp, minHeight = 40.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Visible,
         )
     }
 }
@@ -602,7 +630,9 @@ private fun AutoFailoverCard(
                         "При долгой потере связи — WDTT Plus",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
+                        // Two lines, not one truncated to "WD...": the sentence names the
+                        // fallback protocol, and "WD…" tells the user nothing.
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -636,7 +666,6 @@ private fun ProfilesSection(
     Column(Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -645,11 +674,16 @@ private fun ProfilesSection(
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                // The title gives up width before the buttons do: it is a label, they
+                // are actions. Without weight the three buttons were squeezed to their
+                // minimum and "Вставить" broke into "Вста" / "вить".
+                modifier = Modifier.weight(1f, fill = false),
             )
-            Row {
-                TextButton(onClick = onScanQr) { Text("QR", maxLines = 1) }
-                TextButton(onClick = onPickFile) { Text("Из файла", maxLines = 1) }
-                TextButton(onClick = onAdd) { Text("Вставить", maxLines = 1) }
+            Spacer(Modifier.width(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                ImportChip("QR", onScanQr)
+                ImportChip("Файл", onPickFile)
+                ImportChip("Вставить", onAdd)
             }
         }
 
@@ -737,22 +771,29 @@ private fun ProfileRow(
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    profile.name,
+                    profile.name.trimEnd(' ', '·', '-', '—'),
                     style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    // softWrap off is what stops a long name from breaking INSIDE a word
+                    // and leaving a lone "·" on the second line.
+                    softWrap = false,
                 )
+                // The subtitle is built from parts and joined, rather than appended with a
+                // trailing separator. The old code produced "host:port · " whenever a
+                // failover mark was absent, so the row ended in a floating dot.
+                val subtitle = buildList {
+                    profile.endpointSummary?.takeIf { it.isNotBlank() }?.let { add(it) }
+                    if (profile.isFailoverTarget) add("резерв")
+                    if (isEmpty()) add(profile.protocol.displayName)
+                }.joinToString(" · ")
                 Text(
-                    text = buildString {
-                        profile.endpointSummary?.let { append(it) }
-                        if (profile.isFailoverTarget) {
-                            if (isNotEmpty()) append(" · ")
-                            append("резерв")
-                        }
-                        if (isEmpty()) append(profile.protocol.displayName)
-                    },
+                    text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    softWrap = false,
                 )
             }
             // Only WDTT can be a failover target (failoverTarget() filters on that
