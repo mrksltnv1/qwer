@@ -541,7 +541,8 @@ class MainActivity : ComponentActivity() {
      * @return null on success, or a user-facing error to show inline.
      */
     private fun saveProfileFromText(raw: String, namePrefix: String?, exactName: String? = null): String? {
-        if (raw.trim().startsWith("wdtt://", ignoreCase = true)) {
+        // Extract rather than startsWith: the link may arrive inside a share message.
+        if (WdttLink.extractLink(raw) != null) {
             return when (val parsed = WdttLink.parse(raw)) {
                 is WdttParseResult.Valid -> {
                     val profile = VpnProfile(

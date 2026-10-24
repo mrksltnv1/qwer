@@ -23,6 +23,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.qwer.app.core.AppRouting
+import com.qwer.app.core.QuickExclusions
 import com.qwer.app.device.InstalledApps
 
 /**
@@ -90,6 +92,8 @@ fun AppRoutingScreen(
                 "Маршрутизация",
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             IconButton(onClick = onClose) {
                 Icon(Icons.Filled.Close, contentDescription = "Закрыть")
@@ -101,17 +105,17 @@ fun AppRoutingScreen(
             FilterChip(
                 selected = mode == RoutingMode.ALL,
                 onClick = { mode = RoutingMode.ALL },
-                label = { Text("Всё") },
+                label = { Text("Всё", maxLines = 1) },
             )
             FilterChip(
                 selected = mode == RoutingMode.ONLY,
                 onClick = { mode = RoutingMode.ONLY },
-                label = { Text("Только выбранные") },
+                label = { Text("Только выбранные", maxLines = 1, overflow = TextOverflow.Ellipsis) },
             )
             FilterChip(
                 selected = mode == RoutingMode.EXCEPT,
                 onClick = { mode = RoutingMode.EXCEPT },
-                label = { Text("Все кроме") },
+                label = { Text("Все кроме", maxLines = 1) },
             )
         }
 
@@ -142,17 +146,45 @@ fun AppRoutingScreen(
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                placeholder = { Text("Поиск приложения") },
+                placeholder = { Text("Поиск приложения", maxLines = 1) },
                 leadingIcon = {
                     Icon(Icons.Filled.Search, contentDescription = null)
                 },
             )
             Spacer(Modifier.height(6.dp))
-            Text(
-                "Выбрано: ${selected.size}",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Выбрано: ${selected.size}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                // Fast exclusions only make sense in blacklist mode: in "только
+                // выбранные" the same list would mean the opposite thing.
+                if (mode == RoutingMode.EXCEPT) {
+                    TextButton(
+                        onClick = {
+                            val candidates = QuickExclusions.filter(
+                                apps.map { it.label to it.packageName },
+                            ).map { it.second }.toSet()
+                            // Merge, never replace: the user's own choices must survive.
+                            selected = selected + candidates
+                        },
+                    ) {
+                        Text("Быстрые исключения", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+            if (mode == RoutingMode.EXCEPT) {
+                Text(
+                    "Найдёт банки, госуслуги, маркетплейсы и операторов связи среди установленных.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Spacer(Modifier.height(6.dp))
         }
 
@@ -245,7 +277,7 @@ fun AppRoutingScreen(
                 )
             },
         ) {
-            Text("Применить")
+            Text("Применить", maxLines = 1)
         }
     }
 }

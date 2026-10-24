@@ -43,7 +43,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.qwer.app.qr.QrAnalyzer
 import com.qwer.app.qr.QrCodec
+import com.qwer.app.wdtt.WdttLink
 import java.util.concurrent.Executors
+import androidx.compose.ui.text.style.TextOverflow
 
 /**
  * Camera-only QR import.
@@ -83,11 +85,13 @@ fun QrScanScreen(
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Сканировать QR", style = MaterialTheme.typography.titleLarge)
+                Text("Сканировать QR", style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     "WireGuard, AmneziaWG или WDTT",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             IconButton(onClick = onClose) {
@@ -100,7 +104,7 @@ fun QrScanScreen(
         if (!hasPermission) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Нужно разрешение камеры", style = MaterialTheme.typography.titleMedium)
+                    Text("Нужно разрешение камеры", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(6.dp))
                     Text(
                         "Без него сканировать QR-код невозможно.",
@@ -109,7 +113,7 @@ fun QrScanScreen(
                     )
                     Spacer(Modifier.height(12.dp))
                     Button(onClick = { launcher.launch(Manifest.permission.CAMERA) }) {
-                        Text("Разрешить")
+                        Text("Разрешить", maxLines = 1)
                     }
                 }
             }
@@ -186,7 +190,7 @@ fun QrScanScreen(
                     scannedParts = emptyList()
                     status = null
                     statusIsError = false
-                }) { Text("Сбросить части") }
+                }) { Text("Сбросить части", maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
         }
     }
@@ -202,7 +206,12 @@ fun QrScanScreen(
 private fun normalizeScanned(text: String): String? {
     val trimmed = text.trim()
     if (trimmed.isEmpty()) return null
-    if (trimmed.startsWith("wdtt://", ignoreCase = true)) return trimmed
+
+    // A WDTT link may be wrapped in surrounding text — a share message, a caption, a
+    // branded QR. WDTT Plus finds it with indexOf(); requiring startsWith() here was
+    // why scanning a WDTT config reported "это не конфигурация VPN".
+    WdttLink.extractLink(trimmed)?.let { return it }
+
     if (trimmed.startsWith("[Interface]", ignoreCase = true)) return trimmed
     // Some providers wrap configs in a qwer:// deep link or a bare base64 blob; both are
     // handled elsewhere, so anything unrecognised stays "not a config".

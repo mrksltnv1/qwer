@@ -37,25 +37,25 @@ fun AppBottomBar(
             selected = selected == AppTab.HOME,
             onClick = { onSelect(AppTab.HOME) },
             icon = { Icon(Icons.Filled.Home, contentDescription = null) },
-            label = { Text(AppTab.HOME.label) },
+            label = { Text(AppTab.HOME.label, maxLines = 1) },
         )
         NavigationBarItem(
             selected = selected == AppTab.ROUTING,
             onClick = { onSelect(AppTab.ROUTING) },
             icon = { Icon(Icons.Filled.Apps, contentDescription = null) },
-            label = { Text(AppTab.ROUTING.label) },
+            label = { Text(AppTab.ROUTING.label, maxLines = 1) },
         )
         NavigationBarItem(
             selected = selected == AppTab.DIAGNOSTICS,
             onClick = { onSelect(AppTab.DIAGNOSTICS) },
             icon = { Icon(Icons.Filled.Build, contentDescription = null) },
-            label = { Text(AppTab.DIAGNOSTICS.label) },
+            label = { Text(AppTab.DIAGNOSTICS.label, maxLines = 1) },
         )
         NavigationBarItem(
             selected = selected == AppTab.BACKUP,
             onClick = { onSelect(AppTab.BACKUP) },
             icon = { Icon(Icons.Filled.Save, contentDescription = null) },
-            label = { Text(AppTab.BACKUP.label) },
+            label = { Text(AppTab.BACKUP.label, maxLines = 1) },
         )
     }
 }

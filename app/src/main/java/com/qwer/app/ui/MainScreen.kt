@@ -72,6 +72,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qwer.app.core.ConnectionState
@@ -251,11 +252,15 @@ private fun TopBar(
                 text = "qwer",
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = "VPN · $appVersion",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         Box {
@@ -267,27 +272,27 @@ private fun TopBar(
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(
-                    text = { Text("Добавить вставкой") },
+                    text = { Text("Добавить вставкой", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingIcon = { Icon(Icons.Filled.Description, null) },
                     onClick = { menuOpen = false; onOpenImport() },
                 )
                 DropdownMenuItem(
-                    text = { Text("Импорт из файла") },
+                    text = { Text("Импорт из файла", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingIcon = { Icon(Icons.Filled.Description, null) },
                     onClick = { menuOpen = false; onPickFile() },
                 )
                 DropdownMenuItem(
-                    text = { Text("Сканировать QR") },
+                    text = { Text("Сканировать QR", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingIcon = { Icon(Icons.Filled.QrCodeScanner, null) },
                     onClick = { menuOpen = false; onScanQr() },
                 )
                 DropdownMenuItem(
-                    text = { Text("Проверить обновления") },
+                    text = { Text("Проверить обновления", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingIcon = { Icon(Icons.Filled.Refresh, null) },
                     onClick = { menuOpen = false; onCheckUpdates() },
                 )
                 DropdownMenuItem(
-                    text = { Text("Логи") },
+                    text = { Text("Логи", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingIcon = { Icon(Icons.Filled.Description, null) },
                     onClick = { menuOpen = false; onOpenLogs() },
                 )
@@ -537,7 +542,7 @@ private fun ConnectButton(
             disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
     ) {
-        Text(label, style = MaterialTheme.typography.titleMedium)
+        Text(label, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -592,11 +597,13 @@ private fun AutoFailoverCard(
                 )
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Автопереключение", style = MaterialTheme.typography.titleSmall)
+                    Text("Автопереключение", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         "При долгой потере связи — WDTT Plus",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 Switch(checked = enabled, onCheckedChange = onToggle)
@@ -636,11 +643,13 @@ private fun ProfilesSection(
                 "Конфигурации",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Row {
-                TextButton(onClick = onScanQr) { Text("QR") }
-                TextButton(onClick = onPickFile) { Text("Из файла") }
-                TextButton(onClick = onAdd) { Text("Вставить") }
+                TextButton(onClick = onScanQr) { Text("QR", maxLines = 1) }
+                TextButton(onClick = onPickFile) { Text("Из файла", maxLines = 1) }
+                TextButton(onClick = onAdd) { Text("Вставить", maxLines = 1) }
             }
         }
 
@@ -927,7 +936,7 @@ private fun TrafficCard(traffic: TrafficSnapshot) {
         Column(Modifier.padding(16.dp)) {
             when (traffic) {
                 TrafficSnapshot.Unavailable -> {
-                    Text("Статистика", style = MaterialTheme.typography.titleSmall)
+                    Text("Статистика", style = MaterialTheme.typography.titleSmall, maxLines = 1)
                     Spacer(Modifier.height(4.dp))
                     Text(
                         "Нет данных от движка",
@@ -989,12 +998,16 @@ private fun TrafficTile(label: String, value: String, modifier: Modifier = Modif
             label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         Spacer(Modifier.height(4.dp))
         Text(
             value,
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

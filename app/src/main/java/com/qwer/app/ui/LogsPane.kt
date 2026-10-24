@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import com.qwer.app.diagnostics.Diagnostics
 import com.qwer.app.diagnostics.LogGrouper
 import kotlinx.coroutines.delay
+import androidx.compose.ui.text.style.TextOverflow
 
 /**
  * The log half of the diagnostics screen.
@@ -90,12 +91,15 @@ fun LogsPane(
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Text(
                 "Группировать",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
             )
             Spacer(Modifier.width(6.dp))
             Switch(
@@ -128,7 +132,7 @@ fun LogsPane(
         if (lines.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Пока пусто", style = MaterialTheme.typography.titleSmall)
+                    Text("Пока пусто", style = MaterialTheme.typography.titleSmall, maxLines = 1)
                     Spacer(Modifier.height(6.dp))
                     Text(
                         "Записи появятся, когда вы импортируете профиль или подключитесь.",

@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.qwer.app.backup.BackupManager
+import androidx.compose.ui.text.style.TextOverflow
 
 /**
  * Backup / restore screen.
@@ -71,11 +72,13 @@ fun BackupScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Резервное копирование", style = MaterialTheme.typography.titleLarge)
+                    Text("Резервное копирование", style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         "Профили и ключи шифруются паролем. Восстановить можно на другом устройстве.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 IconButton(onClick = onClose) {
@@ -111,7 +114,7 @@ fun BackupScreen(
                     ) {
                         Icon(Icons.Filled.Download, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Создать резервную копию")
+                        Text("Создать резервную копию", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
@@ -120,7 +123,7 @@ fun BackupScreen(
                     ) {
                         Icon(Icons.Filled.Upload, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Восстановить из файла")
+                        Text("Восстановить из файла", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 ScreenMode.EXPORT -> ExportForm(onExport = onExport, onCancel = { mode = ScreenMode.CHOICE })
@@ -154,26 +157,26 @@ private fun ExportForm(
     val tooShort = password.isNotEmpty() && password.length < 8
 
     Column {
-        Text("Пароль защищает файл. Без него восстановление невозможно.", style = MaterialTheme.typography.bodySmall)
+        Text("Пароль защищает файл. Без него восстановление невозможно.", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(10.dp))
         PasswordField("Пароль", password) { password = it }
         Spacer(Modifier.height(8.dp))
         PasswordField("Повторите пароль", confirm) { confirm = it }
         if (mismatch) {
             Spacer(Modifier.height(6.dp))
-            Text("Пароли не совпадают", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            Text("Пароли не совпадают", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 1)
         }
         if (tooShort) {
             Spacer(Modifier.height(6.dp))
-            Text("Минимум 8 символов", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            Text("Минимум 8 символов", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 1)
         }
         Spacer(Modifier.height(14.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { launcher.launch("qwer-backup.qwerbak") },
                 enabled = password.length >= 8 && password == confirm,
-            ) { Text("Сохранить файл") }
-            TextButton(onClick = onCancel) { Text("Назад") }
+            ) { Text("Сохранить файл", maxLines = 1) }
+            TextButton(onClick = onCancel) { Text("Назад", maxLines = 1) }
         }
     }
 }
@@ -195,7 +198,7 @@ private fun ImportForm(
         OutlinedButton(
             onClick = { launcher.launch(arrayOf("*/*")) },
             modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (picked == null) "Выбрать файл" else "Файл выбран") }
+        ) { Text(if (picked == null) "Выбрать файл" else "Файл выбран", maxLines = 1, overflow = TextOverflow.Ellipsis) }
 
         Spacer(Modifier.height(10.dp))
         PasswordField("Пароль от копии", password) { password = it }
@@ -205,7 +208,7 @@ private fun ImportForm(
             Button(
                 onClick = { picked?.let { onPreview(it, password.toCharArray()) } },
                 enabled = picked != null && password.isNotEmpty(),
-            ) { Text("Проверить") }
+            ) { Text("Проверить", maxLines = 1) }
             TextButton(onClick = onCancel) { Text("Назад") }
         }
 
@@ -216,7 +219,7 @@ private fun ImportForm(
                 shape = RoundedCornerShape(12.dp),
             ) {
                 Column(Modifier.padding(14.dp)) {
-                    Text("В копии профилей: ${preview.total}", style = MaterialTheme.typography.titleSmall)
+                    Text("В копии профилей: ${preview.total}", style = MaterialTheme.typography.titleSmall, maxLines = 1)
                     Text(
                         "Новых: ${preview.newProfiles} · заменят существующие: ${preview.conflicts}",
                         style = MaterialTheme.typography.bodySmall,
@@ -232,10 +235,10 @@ private fun ImportForm(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = {
                             picked?.let { onImport(it, password.toCharArray(), BackupManager.ImportMode.MERGE) }
-                        }) { Text("Добавить и заменить") }
+                        }) { Text("Добавить и заменить", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         OutlinedButton(onClick = {
                             picked?.let { onImport(it, password.toCharArray(), BackupManager.ImportMode.REPLACE) }
-                        }) { Text("Заменить всё") }
+                        }) { Text("Заменить всё", maxLines = 1) }
                     }
                 }
             }

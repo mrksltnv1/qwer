@@ -50,6 +50,7 @@ import com.qwer.app.device.DiagnosticCheck
 import com.qwer.app.device.DiagnosticReport
 import com.qwer.app.device.DiagnosticReportFormatter
 import kotlinx.coroutines.delay
+import androidx.compose.ui.text.style.TextOverflow
 
 /**
  * Device diagnostics screen.
@@ -93,12 +94,16 @@ fun DiagnosticsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Диагностика", style = MaterialTheme.typography.titleLarge)
+                    Text("Диагностика", style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         text = report?.summaryLine()
                             ?: "Проверим, всё ли в порядке с устройством и сетью",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        // A summary, not a paragraph: two lines is the cap before it
+                        // starts pushing the chips off screen on a small phone.
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 IconButton(onClick = onClose) {
@@ -112,12 +117,12 @@ fun DiagnosticsScreen(
                 FilterChip(
                     selected = pane == DiagPane.CHECKS,
                     onClick = { pane = DiagPane.CHECKS },
-                    label = { Text("Проверки") },
+                    label = { Text("Проверки", maxLines = 1) },
                 )
                 FilterChip(
                     selected = pane == DiagPane.LOGS,
                     onClick = { pane = DiagPane.LOGS },
-                    label = { Text("Логи") },
+                    label = { Text("Логи", maxLines = 1) },
                 )
             }
 
@@ -141,6 +146,7 @@ fun DiagnosticsScreen(
                     Text(
                         "Выполняем проверки…",
                         style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -155,7 +161,11 @@ fun DiagnosticsScreen(
                     ) {
                         Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(if (report == null) "Запустить диагностику" else "Проверить снова")
+                        Text(
+                            if (report == null) "Запустить диагностику" else "Проверить снова",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                     if (report != null) {
                         TextButton(
