@@ -197,7 +197,9 @@ class MainActivity : ComponentActivity() {
                         profiles = profilesState,
                         configForProfile = { id -> app.repository.configFor(id) },
                         onImport = { name, config ->
-                            val error = saveProfileFromText(config, namePrefix = null)
+                            // The QR carries the original profile name; keeping it is the
+                            // whole point of moving a profile between devices.
+                            val error = saveProfileFromText(config, namePrefix = null, exactName = name)
                             if (error == null) {
                                 refreshProfiles()
                             } else {
@@ -526,12 +528,12 @@ class MainActivity : ComponentActivity() {
      *
      * @return null on success, or a user-facing error to show inline.
      */
-    private fun saveProfileFromText(raw: String, namePrefix: String?): String? {
+    private fun saveProfileFromText(raw: String, namePrefix: String?, exactName: String? = null): String? {
         if (raw.trim().startsWith("wdtt://", ignoreCase = true)) {
             return when (val parsed = WdttLink.parse(raw)) {
                 is WdttParseResult.Valid -> {
                     val profile = VpnProfile(
-                        name = (namePrefix ?: "") + "WDTT · ${parsed.link.safeLabel()}",
+                        name = exactName ?: ((namePrefix ?: "") + "WDTT · ${parsed.link.safeLabel()}"),
                         protocol = Protocol.WDTT_PLUS,
                         endpointSummary = parsed.link.safeLabel(),
                     )
@@ -552,7 +554,7 @@ class MainActivity : ComponentActivity() {
             is ImportResult.Valid -> {
                 val baseName = "${result.protocol.shortName()} · ${result.endpoint ?: "профиль"}"
                 val profile = VpnProfile(
-                    name = (namePrefix ?: "") + baseName,
+                    name = exactName ?: ((namePrefix ?: "") + baseName),
                     protocol = result.protocol,
                     endpointSummary = result.endpoint,
                 )
