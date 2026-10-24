@@ -3,9 +3,7 @@ package com.qwer.app.ui
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -16,10 +14,9 @@ import androidx.compose.runtime.Composable
 /** Tabs of the app. Kept as an enum so a third screen is one entry away. */
 enum class AppTab(val label: String) {
     HOME("Главная"),
-    LOGS("Логи"),
-    QR("QR"),
+    /** Logs and device checks live together: one screen for "what is wrong". */
+    DIAGNOSTICS("Диагностика"),
     ROUTING("Маршрут"),
-    DIAGNOSTICS("Диаг"),
     BACKUP("Копия"),
 }
 
@@ -41,18 +38,6 @@ fun AppBottomBar(
             onClick = { onSelect(AppTab.HOME) },
             icon = { Icon(Icons.Filled.Home, contentDescription = null) },
             label = { Text(AppTab.HOME.label) },
-        )
-        NavigationBarItem(
-            selected = selected == AppTab.LOGS,
-            onClick = { onSelect(AppTab.LOGS) },
-            icon = { Icon(Icons.Filled.Description, contentDescription = null) },
-            label = { Text(AppTab.LOGS.label) },
-        )
-        NavigationBarItem(
-            selected = selected == AppTab.QR,
-            onClick = { onSelect(AppTab.QR) },
-            icon = { Icon(Icons.Filled.QrCode2, contentDescription = null) },
-            label = { Text(AppTab.QR.label) },
         )
         NavigationBarItem(
             selected = selected == AppTab.ROUTING,

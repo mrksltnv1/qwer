@@ -80,13 +80,28 @@ class AppRoutingTest {
     }
 
     @Test
-    fun `forced exclusion survives in only mode`() {
+    fun `own package is never in the allow-list`() {
+        // For WDTT the native client shares our UID. If our own package were allowed
+        // into the tunnel, its TURN traffic would be routed back into the tunnel —
+        // the 122 MB / 0 bytes loop seen on a real device. Allow-list semantics keep
+        // unlisted apps outside, so our package must simply be dropped.
         val lines = AppRouting.configLines(
-            AppRouting.Only(setOf("org.telegram.messenger")),
+            AppRouting.Only(setOf("org.telegram.messenger", "com.qwer.app")),
             setOf("com.qwer.app"),
         )
-        assertTrue(lines[0].contains("com.qwer.app"))
-        assertTrue(lines[0].contains("org.telegram.messenger"))
+        assertEquals(listOf("IncludedApplications = org.telegram.messenger"), lines)
+    }
+
+    @Test
+    fun `only mode with nothing left after filtering falls back to full tunnel`() {
+        val lines = AppRouting.configLines(
+            AppRouting.Only(setOf("com.qwer.app")),
+            setOf("com.qwer.app"),
+        )
+        // A tunnel that carries nothing would look "connected" with no connectivity,
+        // so the mode degrades to a full tunnel — but our own package must still stay
+        // outside, otherwise the WDTT native client feeds its own traffic back into it.
+        assertEquals(listOf("ExcludedApplications = com.qwer.app"), lines)
     }
 
     // ------------------------------------------------------------------ injector

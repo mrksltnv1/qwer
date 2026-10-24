@@ -2,7 +2,6 @@ package com.qwer.app.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -10,27 +9,20 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,228 +30,40 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import com.qwer.app.core.VpnProfile
 import com.qwer.app.qr.QrAnalyzer
-import com.qwer.app.qr.QrBitmap
 import com.qwer.app.qr.QrCodec
 import java.util.concurrent.Executors
 
 /**
- * QR transfer screen: show a profile as a QR code, or scan one.
+ * Camera-only QR import.
  *
- * The payload format lives in [QrCodec] and is unit-tested; this file only handles
- * pixels, permissions and navigation.
- *
- * Deliberate choices:
- *  - A profile with a large config becomes several QR codes. The screen shows which one
- *    is on display and steps through them, because showing only the first would silently
- *    transfer a truncated config.
- *  - Scanning accumulates parts until the set is complete; a single code is the common
- *    case and completes immediately.
- *  - The camera is released in [DisposableEffect] — leaving it bound would keep the
- *    sensor and the process awake after the user switches tabs.
+ * WHAT CHANGED AND WHY
+ * --------------------
+ * 1. Showing a profile as a QR code was REMOVED. The user's own config never needs to
+ *    leave the phone for this app to work, and a screenshot of that code is a private
+ *    key in the gallery. Export stays available through the encrypted backup, which is
+ *    password-protected and deliberate.
+ * 2. This screen used to accept ONLY our own `QVPN1:` payload and answered "это не
+ *    QR-код qwer" for everything else. What people actually scan is a QR produced by
+ *    their provider — a plain WireGuard/AmneziaWG config or a `wdtt://` link. Those are
+ *    now parsed directly, which is the whole point of the feature.
  */
 @Composable
-fun QrScreen(
-    profiles: List<VpnProfile>,
-    configForProfile: (String) -> String?,
-    onImport: (name: String, config: String) -> Unit,
+fun QrScanScreen(
+    onImport: (config: String) -> Unit,
     onClose: () -> Unit,
 ) {
-    var mode by remember { mutableStateOf(QrMode.SHOW) }
-
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "QR-перенос",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = onClose) {
-                Icon(Icons.Filled.Close, contentDescription = "Закрыть")
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = mode == QrMode.SHOW,
-                onClick = { mode = QrMode.SHOW },
-                label = { Text("Показать") },
-            )
-            FilterChip(
-                selected = mode == QrMode.SCAN,
-                onClick = { mode = QrMode.SCAN },
-                label = { Text("Сканировать") },
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-
-        when (mode) {
-            QrMode.SHOW -> ShowPane(profiles, configForProfile)
-            QrMode.SCAN -> ScanPane(onImport = onImport)
-        }
-    }
-}
-
-private enum class QrMode { SHOW, SCAN }
-
-// ---------------------------------------------------------------------- show
-
-@Composable
-private fun ShowPane(
-    profiles: List<VpnProfile>,
-    configForProfile: (String) -> String?,
-) {
-    if (profiles.isEmpty()) {
-        Centered("Нет профилей", "Сначала импортируйте конфигурацию.")
-        return
-    }
-
-    var selectedId by remember { mutableStateOf(profiles.first().id) }
-    var partIndex by remember { mutableStateOf(0) }
-    var payloadError by remember { mutableStateOf<String?>(null) }
-
-    val selected = profiles.firstOrNull { it.id == selectedId } ?: profiles.first()
-
-    // Encoding is done once per profile, not per recomposition: zxing work on a 900 px
-    // bitmap on every frame of the animation would stutter the list.
-    val encoded = remember(selectedId) {
-        val config = configForProfile(selected.id)
-        if (config == null) {
-            payloadError = "Конфигурация недоступна — импортируйте профиль заново"
-            null
-        } else {
-            when (val res = QrCodec.encode(selected.name, config)) {
-                is QrCodec.Result.Ok -> res.parts
-                is QrCodec.Result.Invalid -> {
-                    payloadError = "Профиль слишком большой для QR"
-                    null
-                }
-            }
-        }
-    }
-
-    if (encoded != null) partIndex = partIndex.coerceIn(0, encoded.lastIndex)
-
-    Column(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.weight(1f)) {
-            items(profiles) { p ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (p.id == selectedId) {
-                            MaterialTheme.colorScheme.secondaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        },
-                    ),
-                    onClick = {
-                        selectedId = p.id
-                        partIndex = 0
-                        payloadError = null
-                    },
-                ) {
-                    Text(
-                        p.safeLabel(),
-                        modifier = Modifier.padding(12.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        val error = payloadError
-        if (error != null) {
-            Text(
-                error,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-            return@Column
-        }
-
-        val parts = encoded ?: return@Column
-        val bitmap = remember(selectedId, partIndex) { QrBitmap.encode(parts[partIndex]) }
-
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            if (bitmap != null) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "QR-код профиля",
-                    modifier = Modifier.fillMaxWidth(0.8f).aspectRatio(1f),
-                )
-            } else {
-                Text("Не удалось построить QR", color = MaterialTheme.colorScheme.error)
-            }
-
-            Spacer(Modifier.height(8.dp))
-            if (parts.size > 1) {
-                Text(
-                    "Код ${partIndex + 1} из ${parts.size}",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = { if (partIndex > 0) partIndex-- },
-                        enabled = partIndex > 0,
-                    ) { Text("Назад") }
-                    Button(
-                        onClick = { if (partIndex < parts.lastIndex) partIndex++ },
-                        enabled = partIndex < parts.lastIndex,
-                    ) { Text("Далее") }
-                }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Отсканируйте все коды по порядку.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                Text(
-                    "Отсканируйте вторым устройством.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "В коде приватный ключ профиля. Не публикуйте скриншот.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-    }
-}
-
-// ---------------------------------------------------------------------- scan
-
-@Composable
-private fun ScanPane(onImport: (name: String, config: String) -> Unit) {
     val context = LocalContext.current
     var hasPermission by remember {
         mutableStateOf(
@@ -271,74 +75,142 @@ private fun ScanPane(onImport: (name: String, config: String) -> Unit) {
         ActivityResultContracts.RequestPermission(),
     ) { granted -> hasPermission = granted }
 
-    var scanned by remember { mutableStateOf(listOf<String>()) }
     var status by remember { mutableStateOf<String?>(null) }
+    var statusIsError by remember { mutableStateOf(false) }
     var done by remember { mutableStateOf(false) }
+    var scannedParts by remember { mutableStateOf(listOf<String>()) }
 
-    if (!hasPermission) {
-        Centered(
-            "Нужно разрешение камеры",
-            "Без него сканировать QR-код невозможно.",
-            action = {
-                Button(onClick = { launcher.launch(Manifest.permission.CAMERA) }) {
-                    Text("Разрешить")
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Сканировать QR", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "WireGuard, AmneziaWG или WDTT",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = onClose) {
+                Icon(Icons.Filled.Close, contentDescription = "Закрыть")
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        if (!hasPermission) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Нужно разрешение камеры", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Без него сканировать QR-код невозможно.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = { launcher.launch(Manifest.permission.CAMERA) }) {
+                        Text("Разрешить")
+                    }
                 }
-            },
-        )
-        return
-    }
+            }
+            return
+        }
 
-    Column(Modifier.fillMaxSize()) {
         Card(
             modifier = Modifier.fillMaxWidth().weight(1f),
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(16.dp),
         ) {
             CameraPreview(
-                enabled = !done,
                 onDecoded = { text ->
                     if (done) return@CameraPreview
-                    if (scanned.contains(text)) return@CameraPreview
-                    val next = scanned + text
-                    scanned = next
 
-                    val result = QrCodec.decode(next)
-                    when {
-                        result.isOk -> {
-                            done = true
-                            val v = result.value!!
-                            onImport(v.name, v.config)
-                            status = "Импортировано: ${v.name}"
+                    // 1) Our own multi-part payload, if this is one.
+                    val ourFormat = QrCodec.decode(
+                        (scannedParts + text).distinct(),
+                    )
+                    if (ourFormat.isOk) {
+                        done = true
+                        val v = ourFormat.value!!
+                        onImport(v.config)
+                        status = "Профиль распознан: ${v.name}"
+                        statusIsError = false
+                        return@CameraPreview
+                    }
+
+                    // 2) Anything else: a plain config or a wdtt:// link, i.e. what a
+                    //    provider actually prints in a QR code.
+                    val plain = normalizeScanned(text)
+                    if (plain != null) {
+                        done = true
+                        onImport(plain)
+                        status = "Конфигурация распознана"
+                        statusIsError = false
+                        return@CameraPreview
+                    }
+
+                    // 3) Nothing recognisable. Only report a multi-part hint when the
+                    //    text at least looks like our format; otherwise the camera is
+                    //    simply pointed at the wrong code.
+                    when (ourFormat.error) {
+                        QrCodec.Reason.MISSING_PARTS -> {
+                            scannedParts = (scannedParts + text).distinct()
+                            status = "Часть ${scannedParts.size}. Сканируйте следующий код."
+                            statusIsError = false
                         }
-                        result.error == QrCodec.Reason.MISSING_PARTS ->
-                            status = "Часть ${next.size}. Сканируйте следующий код."
-                        else ->
-                            status = describe(result.error)
+                        QrCodec.Reason.INCONSISTENT_PARTS -> {
+                            scannedParts = emptyList()
+                            status = "Коды от разных профилей. Начните заново."
+                            statusIsError = true
+                        }
+                        else -> {
+                            status = "Это не конфигурация VPN. Наведите на QR с конфигом."
+                            statusIsError = true
+                        }
                     }
                 },
             )
         }
+
         Spacer(Modifier.height(10.dp))
         Text(
-            status ?: "Наведите камеру на QR-код профиля.",
-            style = MaterialTheme.typography.bodySmall,
-            color = if (status?.startsWith("Импортировано") == true) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
+            status ?: "Наведите камеру на QR-код с конфигурацией.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (statusIsError) MaterialTheme.colorScheme.error
+            else MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (scanned.isNotEmpty() && !done) {
-            Spacer(Modifier.height(6.dp))
-            OutlinedButton(onClick = {
-                scanned = emptyList()
-                status = null
-            }) { Text("Сбросить") }
+
+        if (scannedParts.isNotEmpty() && !done) {
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    scannedParts = emptyList()
+                    status = null
+                    statusIsError = false
+                }) { Text("Сбросить части") }
+            }
         }
     }
 }
 
+/**
+ * Accepts scanned text that is a VPN config rather than our own payload.
+ *
+ * Only structural checks happen here. The authoritative validation is
+ * [com.qwer.app.config.ConfigImporter], which runs when the text is saved — doing it
+ * twice would just duplicate the error messages.
+ */
+private fun normalizeScanned(text: String): String? {
+    val trimmed = text.trim()
+    if (trimmed.isEmpty()) return null
+    if (trimmed.startsWith("wdtt://", ignoreCase = true)) return trimmed
+    if (trimmed.startsWith("[Interface]", ignoreCase = true)) return trimmed
+    // Some providers wrap configs in a qwer:// deep link or a bare base64 blob; both are
+    // handled elsewhere, so anything unrecognised stays "not a config".
+    return null
+}
+
 @Composable
-private fun CameraPreview(enabled: Boolean, onDecoded: (String) -> Unit) {
+private fun CameraPreview(onDecoded: (String) -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val executor = remember { Executors.newSingleThreadExecutor() }
@@ -374,58 +246,20 @@ private fun CameraPreview(enabled: Boolean, onDecoded: (String) -> Unit) {
                         analysis,
                     )
                 } catch (_: Throwable) {
-                    // No camera / already bound: the pane simply stays dark instead of
-                    // crashing the whole tab.
+                    // No camera or already bound: the pane stays dark instead of taking
+                    // the whole tab down.
                 }
             }, ContextCompat.getMainExecutor(ctx))
             previewView
         },
     )
 
-    // Unbind when the tab goes away so the sensor is not held by a hidden screen.
-    DisposableEffect(enabled) {
+    DisposableEffect(Unit) {
         onDispose {
             runCatching {
-                val ctx = context
-                val future = ProcessCameraProvider.getInstance(ctx)
+                val future = ProcessCameraProvider.getInstance(context)
                 if (future.isDone) future.get().unbindAll()
             }
         }
     }
-}
-
-// ---------------------------------------------------------------------- helpers
-
-@Composable
-private fun Centered(
-    title: String,
-    subtitle: String,
-    action: @Composable (() -> Unit)? = null,
-) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (action != null) {
-                Spacer(Modifier.height(10.dp))
-                action()
-            }
-        }
-    }
-}
-
-private fun describe(reason: QrCodec.Reason?): String = when (reason) {
-    QrCodec.Reason.NOT_A_QR_PAYLOAD -> "Это не QR-код qwer"
-    QrCodec.Reason.UNSUPPORTED_VERSION -> "Код создан более новой версией приложения"
-    QrCodec.Reason.TOO_LARGE -> "Профиль слишком большой"
-    QrCodec.Reason.INCONSISTENT_PARTS -> "Коды от разных профилей"
-    QrCodec.Reason.MISSING_PARTS -> "Не хватает части кодов"
-    QrCodec.Reason.CHECKSUM_MISMATCH -> "Код повреждён, попробуйте ещё раз"
-    QrCodec.Reason.CORRUPT_PAYLOAD -> "Не удалось прочитать код"
-    null -> "Не удалось прочитать код"
 }

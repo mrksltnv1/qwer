@@ -157,6 +157,22 @@ fun AppRoutingScreen(
         }
 
         LazyColumn(Modifier.weight(1f)) {
+            if (mode != RoutingMode.ALL && visible.isEmpty()) {
+                item {
+                    // Distinguishes "nothing matched the search" from "the app list could
+                    // not be read", which are different problems with different fixes.
+                    Text(
+                        if (apps.isEmpty()) {
+                            "Список приложений недоступен."
+                        } else {
+                            "Ничего не найдено."
+                        },
+                        modifier = Modifier.padding(vertical = 16.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             items(visible, key = { it.packageName }) { app ->
                 val checked = selected.contains(app.packageName)
                 Card(

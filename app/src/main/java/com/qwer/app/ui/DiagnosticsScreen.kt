@@ -23,6 +23,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -69,6 +70,10 @@ fun DiagnosticsScreen(
 ) {
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
+    // Logs and checks are two views of the same question. A tab row beats a second
+    // bottom-bar entry: correlating a failure with a log line no longer means leaving
+    // the screen.
+    var pane by remember { mutableStateOf(DiagPane.CHECKS) }
 
     LaunchedEffect(copied) {
         if (copied) {
@@ -101,7 +106,33 @@ fun DiagnosticsScreen(
                 }
             }
 
+            Spacer(Modifier.height(10.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = pane == DiagPane.CHECKS,
+                    onClick = { pane = DiagPane.CHECKS },
+                    label = { Text("Проверки") },
+                )
+                FilterChip(
+                    selected = pane == DiagPane.LOGS,
+                    onClick = { pane = DiagPane.LOGS },
+                    label = { Text("Логи") },
+                )
+            }
+
             Spacer(Modifier.height(12.dp))
+
+            if (pane == DiagPane.LOGS) {
+                LogsPane(
+                    modifier = Modifier.fillMaxSize(),
+                    onCopy = { text ->
+                        clipboard.setText(AnnotatedString(text))
+                        copied = true
+                    },
+                )
+                return@Column
+            }
 
             if (isRunning) {
                 Column(Modifier.fillMaxWidth()) {
@@ -195,7 +226,7 @@ fun DiagnosticsScreen(
 }
 
 @Composable
-private fun CheckCard(check: DiagnosticCheck) {
+internal fun CheckCard(check: DiagnosticCheck) {
     val accent = statusColor(check.status)
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -253,9 +284,12 @@ private fun CheckCard(check: DiagnosticCheck) {
     }
 }
 
-private fun statusColor(status: CheckStatus): Color = when (status) {
+internal fun statusColor(status: CheckStatus): Color = when (status) {
     CheckStatus.OK -> Color(0xFF2E9E6B)
     CheckStatus.WARNING -> Color(0xFFD08A00)
     CheckStatus.ERROR -> Color(0xFFC62828)
     CheckStatus.SKIPPED -> Color(0xFF7A8296)
 }
+
+/** Which half of the diagnostics screen is visible. */
+private enum class DiagPane { CHECKS, LOGS }

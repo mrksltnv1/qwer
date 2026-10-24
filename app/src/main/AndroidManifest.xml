@@ -27,7 +27,23 @@
     <!-- Needed only to detect whether the separate WDTT Plus app is installed. -->
     <queries>
         <package android:name="com.wdtt.plus" />
-        <!-- For the file picker we declare nothing special: SAF needs no query. -->
+
+        <!--
+          REQUIRED for the per-app routing picker to show anything at all.
+
+          Since Android 11 (API 30) an app cannot see other installed packages unless it
+          declares them here. queryIntentActivities(MAIN/LAUNCHER) silently returned an
+          EMPTY list without this block, so the routing screen opened with no apps to
+          select — "маршрутизация не работает" looked like a routing bug but was a
+          package-visibility one.
+
+          Declaring the launcher intent (rather than QUERY_ALL_PACKAGES) is both
+          sufficient — only launchable apps are offered — and policy-clean.
+        -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application

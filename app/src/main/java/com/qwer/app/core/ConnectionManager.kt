@@ -348,7 +348,27 @@ class ConnectionManager(
         // route and fed back into the tunnel — a self-amplifying loop. On a real device
         // that showed up as "174 969 packets sent, 0 bytes received" and 122 MB in 16 s.
         // Excluding our own package breaks the loop; libclient reaches TURN directly.
-        val hostedConfig = withSelfExclusion(config)
+        //
+        // This used to call withSelfExclusion(), which meant the user's per-app routing
+        // was silently DROPPED for WDTT — the picker appeared to do nothing whenever the
+        // active profile was WDTT. Routing is now applied here too, with our package
+        // passed as an always-excluded entry so the loop guard survives every mode.
+        val wdttRouting = AppRouting.configLines(
+            profile.appRouting,
+            alwaysExcluded = setOf(context.packageName),
+        )
+        val hostedConfig = if (wdttRouting.isEmpty()) {
+            withSelfExclusion(config)
+        } else {
+            RoutingInjector.apply(config, wdttRouting)
+        }
+        if (wdttRouting.isNotEmpty()) {
+            Diagnostics.event(
+                Event.TUNNEL_START,
+                "routing_apps" to AppRouting.selectedCount(profile.appRouting),
+                "protocol" to profile.protocol,
+            )
+        }
 
         val started = withContext(Dispatchers.IO) {
             runCatching {

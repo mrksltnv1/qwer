@@ -54,16 +54,24 @@ sealed interface AppRouting {
                 }
 
                 is Only -> {
-                    val keep = routing.packages.filter { it.isNotBlank() }.toSet()
+                    // Own package must stay OUTSIDE the tunnel even here: for WDTT its
+                    // libclient child shares our UID, and routing its TURN traffic back
+                    // into the tunnel is a self-amplifying loop (174 969 packets sent,
+                    // 0 received, 122 MB in 16 s on a real device).
+                    //
+                    // Allow-list semantics already keep everything unlisted outside, so
+                    // the fix is to DROP our package rather than add it. Earlier code
+                    // merged it into the allow-list, which reintroduced the loop.
+                    val keep = routing.packages
+                        .filter { it.isNotBlank() }
+                        .filterNot { it in alwaysExcluded }
+                        .toSet()
                     if (keep.isEmpty()) {
                         // Nothing selected: behave like a normal full tunnel instead of a
                         // tunnel that carries no app at all.
                         configLines(All, alwaysExcluded)
                     } else {
-                        // Our own package cannot be in the allow-list AND outside it; the
-                        // engine uses allow-list semantics here, so it is simply included.
-                        val allowed = (keep + alwaysExcluded).sorted()
-                        listOf("IncludedApplications = ${allowed.joinToString(", ")}")
+                        listOf("IncludedApplications = ${keep.sorted().joinToString(", ")}")
                     }
                 }
 

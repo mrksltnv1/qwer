@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreVert
@@ -113,6 +114,7 @@ fun MainScreen(
     onMakeFailover: (VpnProfile) -> Unit,
     onOpenImport: () -> Unit,
     onPickFile: () -> Unit,
+    onScanQr: () -> Unit,
     onOpenLogs: () -> Unit,
     onDismissMessage: () -> Unit,
     onCheckUpdates: () -> Unit,
@@ -143,6 +145,7 @@ fun MainScreen(
             onCheckUpdates = onCheckUpdates,
             onOpenImport = onOpenImport,
             onPickFile = onPickFile,
+            onScanQr = onScanQr,
             onOpenLogs = onOpenLogs,
         )
 
@@ -208,6 +211,7 @@ fun MainScreen(
             onMakeFailover = onMakeFailover,
             onAdd = onOpenImport,
             onPickFile = onPickFile,
+            onScanQr = onScanQr,
         )
 
         Spacer(Modifier.height(32.dp))
@@ -233,6 +237,7 @@ private fun TopBar(
     onCheckUpdates: () -> Unit,
     onOpenImport: () -> Unit,
     onPickFile: () -> Unit,
+    onScanQr: () -> Unit,
     onOpenLogs: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -270,6 +275,11 @@ private fun TopBar(
                     text = { Text("Импорт из файла") },
                     leadingIcon = { Icon(Icons.Filled.Description, null) },
                     onClick = { menuOpen = false; onPickFile() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Сканировать QR") },
+                    leadingIcon = { Icon(Icons.Filled.QrCodeScanner, null) },
+                    onClick = { menuOpen = false; onScanQr() },
                 )
                 DropdownMenuItem(
                     text = { Text("Проверить обновления") },
@@ -527,7 +537,7 @@ private fun ConnectButton(
             disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
     ) {
-        Text(label, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Text(label, style = MaterialTheme.typography.titleMedium)
     }
 }
 
@@ -614,6 +624,7 @@ private fun ProfilesSection(
     onMakeFailover: (VpnProfile) -> Unit,
     onAdd: () -> Unit,
     onPickFile: () -> Unit,
+    onScanQr: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
         Row(
@@ -627,6 +638,7 @@ private fun ProfilesSection(
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Row {
+                TextButton(onClick = onScanQr) { Text("QR") }
                 TextButton(onClick = onPickFile) { Text("Из файла") }
                 TextButton(onClick = onAdd) { Text("Вставить") }
             }

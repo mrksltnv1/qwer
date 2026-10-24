@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.getValue
@@ -56,6 +57,10 @@ class MainActivity : ComponentActivity() {
     private var message by mutableStateOf<String?>(null)
 
     private var showImportDialog by mutableStateOf(false)
+    // QR import is an ACTION on the main screen, not a tab: the user scans a config
+    // once and returns to the profile list. A dedicated tab made it look like a
+    // feature to browse rather than a way to add a profile.
+    private var showQrScan by mutableStateOf(false)
     private var tab by mutableStateOf(AppTab.HOME)
     private var importText by mutableStateOf("")
     private var importError by mutableStateOf<String?>(null)
@@ -183,30 +188,10 @@ class MainActivity : ComponentActivity() {
                 ) { innerPadding ->
                 Box(Modifier.padding(innerPadding)) {
                 when (tab) {
-                    AppTab.LOGS -> LogsScreen(
-                        onClose = { tab = AppTab.HOME },
-                        onClear = { Diagnostics.clear() },
-                    )
                     AppTab.DIAGNOSTICS -> DiagnosticsScreen(
                         report = diagnosticReport,
                         isRunning = diagnosticsRunning,
                         onRun = { runDiagnostics() },
-                        onClose = { tab = AppTab.HOME },
-                    )
-                    AppTab.QR -> QrScreen(
-                        profiles = profilesState,
-                        configForProfile = { id -> app.repository.configFor(id) },
-                        onImport = { name, config ->
-                            // The QR carries the original profile name; keeping it is the
-                            // whole point of moving a profile between devices.
-                            val error = saveProfileFromText(config, namePrefix = null, exactName = name)
-                            if (error == null) {
-                                refreshProfiles()
-                            } else {
-                                message = error
-                            }
-                            tab = AppTab.HOME
-                        },
                         onClose = { tab = AppTab.HOME },
                     )
                     AppTab.ROUTING -> {
@@ -277,13 +262,14 @@ class MainActivity : ComponentActivity() {
                             "Резервный профиль снят"
                         }
                     },
-                    onOpenLogs = { tab = AppTab.LOGS },
+                    onOpenLogs = { tab = AppTab.DIAGNOSTICS },
                     onOpenImport = {
                         importText = ""
                         importError = null
                         showImportDialog = true
                     },
                     onPickFile = { pickConfigFile.launch(arrayOf("application/octet-stream", "text/plain", "*/*")) },
+                    onScanQr = { showQrScan = true },
                     onDismissMessage = { message = null },
                     onCheckUpdates = { checkForUpdates(manual = true) },
                     onDownloadUpdate = { downloadUpdate() },
@@ -311,6 +297,32 @@ class MainActivity : ComponentActivity() {
                 }
                 }
                 }
+
+            if (showQrScan) {
+                androidx.compose.ui.window.Dialog(
+                    onDismissRequest = { showQrScan = false },
+                    properties = androidx.compose.ui.window.DialogProperties(
+                        usePlatformDefaultWidth = false,
+                    ),
+                ) {
+                    androidx.compose.material3.Surface(
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        QrScanScreen(
+                            onImport = { config ->
+                                val error = saveProfileFromText(config, namePrefix = "QR · ")
+                                if (error == null) {
+                                    refreshProfiles()
+                                    showQrScan = false
+                                } else {
+                                    message = error
+                                }
+                            },
+                            onClose = { showQrScan = false },
+                        )
+                    }
+                }
+            }
             }
         }
 
