@@ -42,6 +42,7 @@ import com.qwer.app.config.ConfigImporter
 import com.qwer.app.config.FileConfigReader
 import com.qwer.app.config.ImportResult
 import com.qwer.app.core.Protocol
+import com.qwer.app.core.ConnectionState
 import com.qwer.app.core.AppRouting
 import com.qwer.app.core.VpnProfile
 import com.qwer.app.deeplink.DeepLinkHandler
@@ -237,6 +238,10 @@ class MainActivity : ComponentActivity() {
                             AppRoutingScreen(
                                 apps = installedApps,
                                 initial = target.appRouting,
+                                // Locked whenever a tunnel exists or is coming up. The rule
+                                // is fixed at establish time; editing it live would save a
+                                // setting that silently does nothing.
+                                locked = state.blocksRoutingEdit,
                                 onApply = { routing ->
                                     app.repository.save(target.copy(appRouting = routing), null)
                                     refreshProfiles()

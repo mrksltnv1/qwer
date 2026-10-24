@@ -59,6 +59,19 @@ import com.qwer.app.device.InstalledApps
 fun AppRoutingScreen(
     apps: List<InstalledApps.Entry>,
     initial: AppRouting,
+    /**
+     * True while a tunnel is up or coming up.
+     *
+     * WHY EDITING IS FORBIDDEN THEN: the rule is baked into the config handed to the
+     * engine at start, and `VpnService.Builder` accepts allowed/disallowed apps only ONCE,
+     * when the tunnel is established. There is no API to add or remove an app from a live
+     * tunnel. Saving a new rule while connected would display a setting that has no
+     * effect until the next reconnect — a UI that lies about its own state.
+     *
+     * The screen stays readable (the current rule is still visible) but every control is
+     * disabled and the reason is stated.
+     */
+    locked: Boolean,
     onApply: (AppRouting) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -111,6 +124,35 @@ fun AppRoutingScreen(
             }
         }
 
+        if (locked) {
+            Spacer(Modifier.height(8.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                ),
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        "Правило зафиксировано",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "VPN подключён. Маршрутизация задаётся при установлении туннеля " +
+                            "и не меняется на живом: отключите VPN, измените правило и " +
+                            "подключитесь снова.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            }
+        }
+
         Spacer(Modifier.height(8.dp))
         /*
          * The three mode chips used to sit in one Row. With "Только выбранные" their
@@ -124,11 +166,13 @@ fun AppRoutingScreen(
         ) {
             FilterChip(
                 selected = mode == RoutingMode.ALL,
+                enabled = !locked,
                 onClick = { mode = RoutingMode.ALL },
                 label = { Text("Всё", maxLines = 1, softWrap = false) },
             )
             FilterChip(
                 selected = mode == RoutingMode.ONLY,
+                enabled = !locked,
                 onClick = { mode = RoutingMode.ONLY },
                 label = {
                     Text(
@@ -141,6 +185,7 @@ fun AppRoutingScreen(
             )
             FilterChip(
                 selected = mode == RoutingMode.EXCEPT,
+                enabled = !locked,
                 onClick = { mode = RoutingMode.EXCEPT },
                 label = { Text("Все кроме", maxLines = 1, softWrap = false) },
             )
@@ -173,6 +218,7 @@ fun AppRoutingScreen(
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                enabled = !locked,
                 placeholder = { Text("Поиск приложения", maxLines = 1) },
                 leadingIcon = {
                     Icon(Icons.Filled.Search, contentDescription = null)
@@ -218,6 +264,7 @@ fun AppRoutingScreen(
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = !locked,
                 ) {
                     Icon(
                         Icons.Filled.Bolt,
@@ -281,7 +328,7 @@ fun AppRoutingScreen(
                         },
                     ),
                     onClick = {
-                        if (mode == RoutingMode.ALL) return@Card
+                        if (locked || mode == RoutingMode.ALL) return@Card
                         selected = if (checked) {
                             selected - app.packageName
                         } else {
@@ -297,9 +344,9 @@ fun AppRoutingScreen(
                     ) {
                         Checkbox(
                             checked = checked,
-                            enabled = mode != RoutingMode.ALL,
+                            enabled = !locked && mode != RoutingMode.ALL,
                             onCheckedChange = { on ->
-                                if (mode == RoutingMode.ALL) return@Checkbox
+                                if (locked || mode == RoutingMode.ALL) return@Checkbox
                                 selected = if (on) {
                                     selected + app.packageName
                                 } else {
@@ -330,6 +377,7 @@ fun AppRoutingScreen(
         Spacer(Modifier.height(10.dp))
         androidx.compose.material3.Button(
             modifier = Modifier.fillMaxWidth(),
+            enabled = !locked,
             onClick = {
                 onApply(
                     when (mode) {
@@ -340,7 +388,12 @@ fun AppRoutingScreen(
                 )
             },
         ) {
-            Text("Применить", maxLines = 1)
+            Text(
+                if (locked) "Недоступно при подключении" else "Применить",
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

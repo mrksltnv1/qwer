@@ -39,6 +39,23 @@ sealed interface ConnectionState {
 
     val isBusy: Boolean
         get() = this is Connecting || this is Verifying || this is Switching
+
+    /**
+     * True when the per-app routing rule must not be edited.
+     *
+     * WHY THE RULE IS FROZEN: per-app routing is expressed as
+     * Included/ExcludedApplications inside the config handed to the engine at start, and
+     * `VpnService.Builder` accepts those lists only once, while establishing the tunnel.
+     * Android offers no API to add or remove an app from a live tunnel. Saving a new rule
+     * while connected would therefore persist a setting that silently does nothing until
+     * the next reconnect — a UI that lies about its own state.
+     *
+     * Editing is allowed only when there is no tunnel and no attempt in flight
+     * (`Disconnected`) or when the last attempt already failed (`Failed`), because in the
+     * failed case no VpnService is holding the slot.
+     */
+    val blocksRoutingEdit: Boolean
+        get() = this !is Disconnected && this !is Failed
 }
 
 enum class FailureReason {
