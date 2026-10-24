@@ -28,3 +28,6 @@ release-audit*
 # It is INTENTIONALLY committed. There is no AmneziaWG tunnel artifact in Maven
 # Central, so a fresh clone cannot build without it. It is built from
 # amneziawg-android :tunnel (Apache-2.0); see docs/BUILD.md for reproduction.
+
+# Local build outputs; releases live in Gitea Releases, not in git
+artifacts/
