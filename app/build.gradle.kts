@@ -26,8 +26,8 @@ android {
         applicationId = "com.qwer.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 850
-        versionName = "0.8.5"
+        versionCode = 860
+        versionName = "0.8.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -51,10 +51,17 @@ android {
                 keyAlias = keystoreProps.getProperty("keyAlias")
                 keyPassword = keystoreProps.getProperty("keyPassword")
             }
-            // All three schemes on purpose: some OEM installers (realme/OPPO, Xiaomi)
-            // reject packages that lack v1, and Play requires v2+. Having v1+v2+v3
-            // means every installer path is happy.
-            enableV1Signing = true
+            // v2+v3 ONLY. minSdk is 24, so v1 (JAR signing) is not needed by any
+            // supported Android version.
+            //
+            // WHY v1 IS OFF — this caused "пакет повреждён" on a realme device:
+            // enabling v1 makes Gradle write META-INF/CERT.SF + CERT.RSA, but the v1
+            // block is not actually valid for this archive (apksigner reports
+            // "v1 scheme: false" while the files are present). `adb install` ignores
+            // the stale files, but OEM installers (realme/OPPO ColorOS) try to verify
+            // the JAR signature, fail, and reject the APK as corrupt.
+            // With v1 disabled there are no stale files at all.
+            enableV1Signing = false
             enableV2Signing = true
             enableV3Signing = true
         }
