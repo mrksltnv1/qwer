@@ -342,6 +342,31 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         if (BuildConfig.DEBUG) {
+            // Debug-only: import a REAL wdtt:// link (needed to test the WG->WDTT
+            // failover path end to end; the stub profile below has no link).
+            intent?.getStringExtra("debug_wdtt_link")?.let { raw ->
+                // adb shell splits arguments on '&', which shreds a wdtt:// query
+                // string. Accept b64: to survive the shell boundary.
+                val link = if (raw.startsWith("b64:")) {
+                    runCatching {
+                        String(android.util.Base64.decode(raw.removePrefix("b64:"), android.util.Base64.DEFAULT))
+                    }.getOrNull()
+                } else raw
+                if (link == null) {
+                    message = "WDTT-ссылка повреждена"
+                    return
+                }
+                val err = saveProfileFromText(link, namePrefix = "Test ")
+                if (err == null) {
+                    val p = app.repository.all().firstOrNull { it.protocol == Protocol.WDTT_PLUS }
+                    if (p != null) app.repository.setFailoverTarget(p.id)
+                    refreshProfiles()
+                    message = "WDTT-профиль добавлен как резервный"
+                } else {
+                    message = "WDTT-ссылка отклонена: $err"
+                }
+                return
+            }
             if (intent?.getBooleanExtra("debug_wdtt_profile", false) == true) {
                 val profile = VpnProfile(
                     name = "Test WDTT (резерв)",
@@ -362,6 +387,17 @@ class MainActivity : ComponentActivity() {
                 if (decoded != null) {
                     saveProfileFromText(decoded, namePrefix = "Test ")
                     refreshProfiles()
+                    // Debug-only: connect without touching the UI. Needed because the
+                    // BlissOS test VM shows system overlays (home-app resolver, welcome
+                    // screen) that swallow synthetic taps, which made UI-driven tests
+                    // report a false "tunnel never started".
+                    if (intent?.getBooleanExtra("debug_auto_connect", false) == true) {
+                        val id = app.repository.activeProfile()?.id
+                        if (id != null) {
+                            Diagnostics.event(Event.VPN_PERMISSION, "debug_auto_connect" to true)
+                            requestConnect(app.repository.find(id)!!)
+                        }
+                    }
                     return
                 }
             }

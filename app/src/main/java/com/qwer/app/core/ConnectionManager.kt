@@ -306,6 +306,13 @@ class ConnectionManager(
         repository.setActive(profile.id)
         Diagnostics.event(Event.WDTT_ENGINE, "stage" to "tunnel_up", "peer" to parsed.safeLabel())
 
+        // A new tunnel instance means fresh counter baselines. This was missing for
+        // WDTT: the switch to WDTT left the UI showing the previous protocol's numbers,
+        // and after a failover the WDTT tunnel reported "нет данных от движка" because
+        // no sampler was ever started for it.
+        traffic.startSession(profile.protocol)
+        startTrafficSampling()
+
         _state.value = ConnectionState.Verifying
         // We excluded ourselves from the tunnel, so a plain TCP probe would test the
         // DIRECT path and always succeed — a false "Connected". The only honest signal
@@ -517,6 +524,9 @@ class ConnectionManager(
 
         // Stop the current tunnel first: Android permits a single active VpnService,
         // and the WDTT client needs its local WireGuard port free.
+        // Also drop the old session's counters here: without this the UI kept rendering
+        // the previous protocol's traffic while the switch was in progress.
+        stopTrafficSampling()
         withContext(Dispatchers.IO) { runCatching { engine?.down() } }
         engine = null
         withContext(Dispatchers.IO) { runCatching { wdttClient?.stop() } }
