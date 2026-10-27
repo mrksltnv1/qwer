@@ -177,7 +177,13 @@ class MainActivity : ComponentActivity() {
 
         diagnosticEngine = DiagnosticEngine(this)
         backupManager = BackupManager(app.repository)
-        updateChecker = UpdateChecker(currentVersionCode = BuildConfig.VERSION_CODE)
+        updateChecker = UpdateChecker(
+            currentVersionCode = BuildConfig.VERSION_CODE,
+            // The dotted name is the comparison key: the versionCode scheme changed
+            // mid-history (0.8.x used patch*10, 0.9.x uses patch), so any arithmetic
+            // formula reported the running build as an update to itself.
+            currentVersionName = BuildConfig.VERSION_NAME,
+        )
         updateInstaller = UpdateInstaller(this)
         refreshProfiles()
 

@@ -87,6 +87,9 @@ class ConnectionManager(
     /** Last time the tunnel was rebuilt because the transport changed. */
     private var lastNetworkRestartAt: Long = 0L
 
+    /** Consecutive automatic restarts after the engine died; reset on success. */
+    private var engineRestarts: Int = 0
+
     /** Last successfully read engine counters, used when a sample is unreadable. */
     private var lastCounters = com.qwer.app.engine.TunnelEngine.Counters(0, 0)
 
@@ -343,6 +346,9 @@ class ConnectionManager(
 
         activeProfile = profile
         repository.setActive(profile.id)
+        // A working tunnel clears the engine-restart ladder, so a failure hours later
+        // still gets the full set of retries instead of an exhausted counter.
+        engineRestarts = 0
         Diagnostics.event(Event.TUNNEL_START, "protocol" to profile.protocol, "profile" to profile.id)
 
         // A new tunnel instance means fresh counter baselines.
@@ -639,10 +645,30 @@ class ConnectionManager(
                 delay(failoverConfig.probeIntervalMillis)
                 val eng = engine ?: break
                 if (!eng.isUp()) {
+                    /*
+                     * THE 11:32 FIELD INCIDENT.
+                     *
+                     * The engine died, this branch set Failed and broke out of the loop.
+                     * Nothing was logged, and no restart was scheduled, so the tunnel
+                     * stayed dead until the user pressed reconnect 63 s later. The log
+                     * only showed the FGS teardown that followed, which looked like the
+                     * cause but was the consequence.
+                     *
+                     * Now: the death is recorded with its protocol, and a bounded
+                     * restart is scheduled so a transient engine failure heals itself.
+                     */
+                    Diagnostics.warn(
+                        Event.TUNNEL_START_FAILED,
+                        null,
+                        "stage" to "engine_died",
+                        "protocol" to profile.protocol,
+                        "profile" to profile.id,
+                    )
                     _state.value = ConnectionState.Failed(
                         FailureReason.ENGINE_ERROR,
                         "Туннель неожиданно остановлен",
                     )
+                    scheduleEngineRecovery(profile)
                     break
                 }
                 val ok = withContext(Dispatchers.IO) { probe.probe() }
@@ -720,6 +746,53 @@ class ConnectionManager(
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Brings the tunnel back after the engine died on its own.
+     *
+     * Bounded and jitter-free on purpose: the engine death is a local failure, not a
+     * network handover, so the retry ladder is short (2 s, 4 s, 8 s …). The counter is
+     * reset on every successful connect, so a tunnel that works for hours and then
+     * fails once still gets the full ladder.
+     *
+     * Runs in [scope], not in the monitor coroutine: the monitor has already broken out
+     * of its loop and cannot restart itself.
+     */
+    private fun scheduleEngineRecovery(profile: VpnProfile) {
+        if (engineRestarts >= MAX_ENGINE_RESTARTS) {
+            Diagnostics.warn(
+                Event.SLEEP_RECOVERY,
+                null,
+                "stage" to "engine_restart_gave_up",
+                "attempts" to engineRestarts,
+            )
+            return
+        }
+        engineRestarts++
+        val attempt = engineRestarts
+        val delayMs = (RETRY_BASE_MS shl (attempt - 1).coerceIn(0, 4))
+            .coerceAtMost(MAX_ENGINE_RESTART_DELAY_MS)
+        Diagnostics.event(
+            Event.SLEEP_RECOVERY,
+            "stage" to "engine_restart_scheduled",
+            "attempt" to attempt,
+            "delay_ms" to delayMs,
+        )
+        scope.launch {
+            delay(delayMs)
+            Diagnostics.event(
+                Event.SLEEP_RECOVERY,
+                "stage" to "engine_restart",
+                "attempt" to attempt,
+                "profile" to profile.id,
+            )
+            // Tear down what is left, then reconnect through the normal path so the
+            // operation gate, the FGS and the traffic session all behave as on a
+            // manual reconnect.
+            mutex.withLock { runCatching { stopTunnelLocked("engine-died") } }
+            connectInternal(profile.id)
         }
     }
 
@@ -817,6 +890,15 @@ class ConnectionManager(
          * being established, so only the first one acts and the rest are logged.
          */
         const val MIN_RESTART_INTERVAL_MS = 15_000L
+
+        /** Restarts after a spontaneous engine death before giving up. */
+        const val MAX_ENGINE_RESTARTS = 5
+
+        /** Base delay of the engine-restart ladder: 2 s, 4 s, 8 s … */
+        const val RETRY_BASE_MS = 2_000L
+
+        /** Never wait longer than this between engine restarts. */
+        const val MAX_ENGINE_RESTART_DELAY_MS = 30_000L
 
         /** Traffic UI refresh; 2 s is smooth enough and cheap enough for battery. */
         const val TRAFFIC_INTERVAL_MS = 2_000L

@@ -70,6 +70,12 @@ class ConnectionForegroundService : Service() {
                     val latest = app.connectionManager.state.value
                     if (latest is ConnectionState.Disconnected || latest is ConnectionState.Failed) {
                         Diagnostics.event(Event.FOREGROUND_SERVICE, "stage" to "stopping")
+                        // This stop is OUR decision, not the system killing us. Without
+                        // the flag onDestroy reported "stage=lost" after every normal
+                        // teardown, which is the line that made the 11:32 incident look
+                        // like a foreground-service failure instead of the engine death
+                        // that actually caused it.
+                        intentionalStop = true
                         stopSelf()
                     }
                 }

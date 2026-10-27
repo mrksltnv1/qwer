@@ -37,6 +37,18 @@ class UpdateChecker(
     private val repoOwner: String = "mrksltnv1",
     private val repoName: String = "qwer",
     private val currentVersionCode: Int,
+    /**
+     * Human-readable version of the running build, e.g. "0.9.8".
+     *
+     * WHY THE NAME IS THE SOURCE OF TRUTH AND NOT versionCode:
+     * the manifest scheme changed inside the 0.8 → 0.9 line. Up to 0.8.x a patch
+     * incremented by 10 (0.8.2 = 820); from 0.9.0 it increments by 1 (0.9.8 = 908).
+     * Any single arithmetic formula therefore disagrees with half the history — the
+     * `patch * 10` variant turned tag 0.9.8 into 980 > 908 and offered users an
+     * "update" to the build they were already running.
+     * Comparing the dotted version names has no such failure mode.
+     */
+    private val currentVersionName: String = "",
     private val httpTimeoutMillis: Int = 8_000,
 ) {
 
@@ -45,7 +57,13 @@ class UpdateChecker(
             val latest = fetchLatestRelease() ?: return@withContext UpdateResult.Failed(
                 "Не удалось получить список релизов"
             )
-            if (latest.versionCode > currentVersionCode) {
+            val isNewer = if (currentVersionName.isNotBlank()) {
+                isNewerVersion(latest.versionName, currentVersionName)
+            } else {
+                // Fallback for callers that only know the code.
+                latest.versionCode > currentVersionCode
+            }
+            if (isNewer) {
                 Diagnostics.event(
                     Diagnostics.Event.APP_START,
                     "update_available" to latest.versionName,
@@ -117,6 +135,44 @@ class UpdateChecker(
 
     companion object {
         /**
+         * Parses "0.9.8", "v0.9.8", "0.9.8-beta" into [0, 9, 8].
+         * Returns null when the tag carries no numeric version.
+         */
+        fun parseVersion(tag: String): List<Int>? {
+            val cleaned = tag.trim().removePrefix("v").removePrefix("V")
+            val numeric = cleaned.split('-', '+', ' ').firstOrNull().orEmpty()
+            if (numeric.isBlank()) return null
+            val parts = numeric.split('.')
+            if (parts.size < 2) return null
+            val numbers = ArrayList<Int>(parts.size)
+            for (part in parts) {
+                val digits = part.takeWhile { it.isDigit() }
+                if (digits.isEmpty()) return null
+                numbers += digits.toIntOrNull() ?: return null
+            }
+            return numbers
+        }
+
+        /**
+         * True when [latest] is strictly newer than [current].
+         *
+         * Compares component by component, treating a missing component as 0, so
+         * "0.9" and "0.9.0" are equal and "0.10.0" sorts after "0.9.8" — the classic
+         * string-comparison trap.
+         */
+        fun isNewerVersion(latest: String, current: String): Boolean {
+            val a = parseVersion(latest) ?: return false
+            val b = parseVersion(current) ?: return false
+            val size = maxOf(a.size, b.size)
+            for (i in 0 until size) {
+                val x = a.getOrElse(i) { 0 }
+                val y = b.getOrElse(i) { 0 }
+                if (x != y) return x > y
+            }
+            return false
+        }
+
+        /**
          * Maps a release tag to the `versionCode` used in the manifest.
          *
          * The scheme is `major * 10000 + minor * 100 + patch * 10`, matching what
@@ -136,7 +192,10 @@ class UpdateChecker(
             val major = parts.getOrNull(0)?.toIntOrNull() ?: return null
             val minor = parts.getOrNull(1)?.toIntOrNull() ?: return null
             val patch = parts.getOrNull(2)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 0
-            return major * 10_000 + minor * 100 + patch * 10
+            // Current scheme (0.9.0 and later): 0.9.8 -> 908, 1.0.0 -> 10000.
+            // The old 0.8.x line used patch * 10; it is history and cannot be recovered
+            // from the tag alone, which is exactly why isNewerVersion() compares names.
+            return major * 10_000 + minor * 100 + patch
         }
     }
 }
