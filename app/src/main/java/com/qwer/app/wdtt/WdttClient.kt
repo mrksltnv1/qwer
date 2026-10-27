@@ -125,9 +125,24 @@ class WdttClient(private val context: Context) {
         _state.value = WdttState(running = true, phase = WdttPhase.CONNECTING)
         Diagnostics.event(Event.WDTT_ENGINE, "stage" to "started", "peer" to link.safeLabel())
 
-        // Wait for the config box. The client needs to do a TURN allocation and a DTLS
-        // handshake first, which takes several seconds on a mobile link.
-        val config = awaitConfig(proc, timeoutMillis = CONFIG_TIMEOUT_MS)
+        /*
+         * Wait for the config box.
+         *
+         * The 45 s deadline was too tight during a failover. Field log: a direct start
+         * produced the config in 27 s, but the same client started right after a tunnel
+         * teardown and a network switch needed 46 s and was killed one second before
+         * finishing — twice in a row (14:40:50 and 14:44:17), with `alive=true` in both
+         * cases, meaning the child was still working, not stuck.
+         *
+         * The wait is now progress-based: every line the client prints pushes the soft
+         * deadline forward, while HARD_CAP_MS bounds the total so a chatty but broken
+         * client cannot hang the connect path forever.
+         */
+        val config = awaitConfig(
+            proc,
+            timeoutMillis = CONFIG_TIMEOUT_MS,
+            hardCapMillis = CONFIG_HARD_CAP_MS,
+        )
 
         if (config == null) {
             val tail = _state.value.lastLine
@@ -158,17 +173,36 @@ class WdttClient(private val context: Context) {
     }
 
     /** Reads stdout until the config box closes, or the deadline passes. */
-    private fun awaitConfig(proc: Process, timeoutMillis: Long): String? {
-        val deadline = System.currentTimeMillis() + timeoutMillis
+    private fun awaitConfig(
+        proc: Process,
+        timeoutMillis: Long,
+        hardCapMillis: Long = timeoutMillis,
+    ): String? {
+        val startedAt = System.currentTimeMillis()
+        val hardDeadline = startedAt + hardCapMillis
+        // AtomicLong, not @Volatile on a local: Kotlin forbids the annotation on locals,
+        // and the reader thread and the waiter thread both need to see the value.
+        val deadline = java.util.concurrent.atomic.AtomicLong(startedAt + timeoutMillis)
 
         val reader = BufferedReader(InputStreamReader(proc.inputStream, Charsets.UTF_8))
         readerThread = Thread {
             var collecting = false
             val sb = StringBuilder()
             try {
-                while (System.currentTimeMillis() < deadline) {
+                while (System.currentTimeMillis() < deadline.get()) {
                     val line = reader.readLine() ?: break
-                    _state.value = _state.value.copy(lastLine = line.trim().take(160))
+                    // Progress keeps the wait alive: a client that is still printing is
+                    // still working. The hard cap is enforced separately.
+                    deadline.set(
+                        minOf(
+                            System.currentTimeMillis() + timeoutMillis,
+                            hardDeadline,
+                        ),
+                    )
+                    val trimmed = line.trim()
+                    if (trimmed.isNotEmpty() && !isNoiseLine(trimmed)) {
+                        _state.value = _state.value.copy(lastLine = trimmed.take(160))
+                    }
 
                     when {
                         line.contains("╔") && line.contains("WireGuard", ignoreCase = true) -> {
@@ -202,7 +236,7 @@ class WdttClient(private val context: Context) {
             start()
         }
 
-        while (System.currentTimeMillis() < deadline) {
+        while (System.currentTimeMillis() < deadline.get()) {
             configBox?.let { return it }
             if (!proc.isAlive && configBox == null) return null
             Thread.sleep(120)
@@ -270,7 +304,27 @@ class WdttClient(private val context: Context) {
 
     private companion object {
         /** TURN allocation + DTLS handshake + GETCONF, measured ~6–20 s on mobile. */
-        const val CONFIG_TIMEOUT_MS = 45_000L
+        /**
+         * Soft deadline, extended while the client keeps printing.
+         *
+         * 90 s because a failover start competes with teardown of the previous tunnel
+         * and a network switch; the observed worst case is ~46 s.
+         */
+        const val CONFIG_TIMEOUT_MS = 90_000L
+
+        /** Absolute bound on the wait, regardless of output. */
+        const val CONFIG_HARD_CAP_MS = 150_000L
+
+        /**
+         * Lines that carry no diagnostic value.
+         *
+         * The periodic statistics line used to become the user-facing error text:
+         * "WDTT не выдал конфигурацию: 2026/10/27 11:45:01 [СТАТИСТИКА] Активных: 0".
+         * That told the user nothing and hid the real reason.
+         */
+        private fun isNoiseLine(line: String): Boolean =
+            line.contains("[СТАТИСТИКА]", ignoreCase = true) ||
+                line.contains("[STATISTICS]", ignoreCase = true)
     }
 }
 

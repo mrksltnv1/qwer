@@ -90,6 +90,15 @@ class ConnectionManager(
     /** Consecutive automatic restarts after the engine died; reset on success. */
     private var engineRestarts: Int = 0
 
+    /** When the current tunnel became active; guards against restarting a fresh one. */
+    private var tunnelStartedAt: Long = 0L
+
+    /** Profile that was active before a failover, used to return after a failed switch. */
+    private var preFailoverProfile: VpnProfile? = null
+
+    /** Attempts made to get back to the pre-failover profile. */
+    private var returnAttempts: Int = 0
+
     /** Last successfully read engine counters, used when a sample is unreadable. */
     private var lastCounters = com.qwer.app.engine.TunnelEngine.Counters(0, 0)
 
@@ -247,6 +256,22 @@ class ConnectionManager(
     private suspend fun forceRestartOnNetworkChange() {
         val profile = activeProfile ?: return
         val now = clock()
+        /*
+         * A tunnel younger than the settle window already has its socket on the current
+         * network: it was created after the transport changed. Restarting it is pure
+         * churn. The field log shows exactly that at 14:43:52 -> 14:43:58: a fresh
+         * WireGuard tunnel was torn down 6 seconds after start, and the following WDTT
+         * failover then had to compete with that teardown.
+         */
+        if (now - tunnelStartedAt < MIN_SETTLE_MS) {
+            Diagnostics.event(
+                Event.SLEEP_RECOVERY,
+                "stage" to "restart_skipped",
+                "why" to "fresh_tunnel",
+                "age_ms" to (now - tunnelStartedAt),
+            )
+            return
+        }
         if (now - lastNetworkRestartAt < MIN_RESTART_INTERVAL_MS) {
             Diagnostics.event(
                 Event.SLEEP_RECOVERY,
@@ -346,9 +371,13 @@ class ConnectionManager(
 
         activeProfile = profile
         repository.setActive(profile.id)
+        tunnelStartedAt = clock()
         // A working tunnel clears the engine-restart ladder, so a failure hours later
         // still gets the full set of retries instead of an exhausted counter.
         engineRestarts = 0
+        // Reaching the primary again means the failed-switch recovery worked.
+        returnAttempts = 0
+        if (profile.id != preFailoverProfile?.id) preFailoverProfile = null
         Diagnostics.event(Event.TUNNEL_START, "protocol" to profile.protocol, "profile" to profile.id)
 
         // A new tunnel instance means fresh counter baselines.
@@ -404,6 +433,10 @@ class ConnectionManager(
             is WdttClient.StartResult.Failed -> {
                 Diagnostics.warn(Event.WDTT_ENGINE, null, "stage" to "start")
                 _state.value = ConnectionState.Failed(FailureReason.WDTT_UNAVAILABLE, res.reason)
+                // A failed switch must not leave the user with nothing. The field log
+                // shows the failover ending here twice in a row with no further attempt:
+                // the app sat in Failed while the WireGuard server was reachable again.
+                scheduleReturnToPrimary()
                 return
             }
         }
@@ -464,6 +497,7 @@ class ConnectionManager(
 
         activeProfile = profile
         repository.setActive(profile.id)
+        tunnelStartedAt = clock()
         Diagnostics.event(Event.WDTT_ENGINE, "stage" to "tunnel_up", "peer" to parsed.safeLabel())
 
         // A new tunnel instance means fresh counter baselines. This was missing for
@@ -797,6 +831,9 @@ class ConnectionManager(
     }
 
     private suspend fun performFailover(from: VpnProfile, decision: FailoverDecision.SwitchTo) {
+        // Remembered so a failed switch can hand the user back to a working tunnel
+        // instead of leaving the app in Failed with no way forward.
+        preFailoverProfile = from
         _state.value = ConnectionState.Switching(from.protocol, decision.target)
         val target = repository.failoverTarget()
         if (target == null) {
@@ -830,6 +867,41 @@ class ConnectionManager(
             return
         }
         connectWdttLocked(target, wdttConfig)
+    }
+
+    /**
+     * Returns to the tunnel that was active before a failed failover.
+     *
+     * Bounded ladder (2 s, 4 s, 8 s, 16 s): the switch failed locally, and the primary
+     * may simply need the WDTT client wound down before its port is free again.
+     */
+    private fun scheduleReturnToPrimary() {
+        val primary = preFailoverProfile ?: return
+        if (returnAttempts >= MAX_RETURN_ATTEMPTS) {
+            Diagnostics.warn(
+                Event.FAILOVER_EXHAUSTED,
+                null,
+                "stage" to "return_gave_up",
+                "attempts" to returnAttempts,
+            )
+            return
+        }
+        returnAttempts++
+        val attempt = returnAttempts
+        val delayMs = (RETRY_BASE_MS shl (attempt - 1).coerceIn(0, 4))
+            .coerceAtMost(MAX_ENGINE_RESTART_DELAY_MS)
+        Diagnostics.event(
+            Event.FAILOVER_TRIGGERED,
+            "stage" to "return_to_primary",
+            "attempt" to attempt,
+            "delay_ms" to delayMs,
+            "profile" to primary.id,
+        )
+        scope.launch {
+            delay(delayMs)
+            mutex.withLock { runCatching { stopTunnelLocked("return-to-primary") } }
+            connectInternal(primary.id)
+        }
     }
 
     private fun hasPhysicalNetwork(): Boolean {
@@ -899,6 +971,15 @@ class ConnectionManager(
 
         /** Never wait longer than this between engine restarts. */
         const val MAX_ENGINE_RESTART_DELAY_MS = 30_000L
+
+        /**
+         * A tunnel younger than this is not restarted on a transport change: it was
+         * created after the change and already uses the current network.
+         */
+        const val MIN_SETTLE_MS = 20_000L
+
+        /** Attempts to get back to the pre-failover profile before giving up. */
+        const val MAX_RETURN_ATTEMPTS = 4
 
         /** Traffic UI refresh; 2 s is smooth enough and cheap enough for battery. */
         const val TRAFFIC_INTERVAL_MS = 2_000L
