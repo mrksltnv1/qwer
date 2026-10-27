@@ -40,6 +40,10 @@ class TunnelEngine(private val context: Context) : AutoCloseable {
     var lastRemovedKeys: List<String> = emptyList()
         private set
 
+    /** Non-zero when PersistentKeepalive was injected into the last started config. */
+    var lastInjectedKeepalive: Int = 0
+        private set
+
     /**
      * Brings a tunnel up from raw config text.
      *
@@ -60,7 +64,19 @@ class TunnelEngine(private val context: Context) : AutoCloseable {
                 "dropped_wgquick_keys" to normalized.removedKeys.joinToString(","),
             )
         }
-        val parsed: Config = Config.parse(BufferedReader(StringReader(normalized.config)))
+        // Keepalive is injected into the COPY handed to the engine, never into the
+        // stored config. Without it an idle peer sends nothing, NAT drops the mapping
+        // in 30-120 s and the tunnel black-holes traffic after a network switch while
+        // still reporting "up" — the reported "тоннель зависает" in roaming.
+        val withKeepalive = ConfigNormalizer.ensureKeepalive(normalized.config)
+        if (withKeepalive != normalized.config) {
+            lastInjectedKeepalive = ConfigNormalizer.DEFAULT_KEEPALIVE_SECONDS
+            Diagnostics.event(
+                Diagnostics.Event.TUNNEL_START,
+                "keepalive_injected" to ConfigNormalizer.DEFAULT_KEEPALIVE_SECONDS,
+            )
+        }
+        val parsed: Config = Config.parse(BufferedReader(StringReader(withKeepalive)))
         val tunnel = EngineTunnel(tunnelName)
         backend.setState(tunnel, Tunnel.State.UP, parsed)
         current = tunnel

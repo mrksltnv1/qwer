@@ -103,6 +103,39 @@ class ProfileRepository(
         all().map { it.id }.filter { it !in keep }.forEach { configStore.removeConfig(it) }
     }
 
+    /**
+     * Adds several profiles in one write, keeping what already exists.
+     *
+     * Used by the multi-config link: the bundle may contain tunnels the user already
+     * has, and a partially applied set would leave them unable to tell which are
+     * missing. Metadata is persisted once, then the secrets are written.
+     *
+     * @return ids of the profiles that were actually added.
+     */
+    fun addAll(profiles: List<VpnProfile>, configs: Map<String, String>): List<String> {
+        if (profiles.isEmpty()) return emptyList()
+        val existing = all()
+        val existingIds = existing.map { it.id }.toSet()
+        // A bundle may legitimately repeat a name (two servers, same provider). Only the
+        // id must be unique, and ids come from the bundle entries themselves.
+        val toAdd = profiles.filterNot { it.id in existingIds }
+        if (toAdd.isEmpty()) return emptyList()
+
+        // Only one failover target may exist; a bundle cannot silently steal it.
+        val hasFailover = existing.any { it.isFailoverTarget }
+        val normalized = if (hasFailover) {
+            toAdd.map { it.copy(isFailoverTarget = false) }
+        } else {
+            toAdd
+        }
+
+        persist(existing + normalized)
+        normalized.forEach { profile ->
+            configs[profile.id]?.let { configStore.putConfig(profile.id, it) }
+        }
+        return normalized.map { it.id }
+    }
+
     fun configFor(id: String): String? = configStore.getConfig(id)
 
     /** True when a profile exists but its secret could not be decrypted (re-import needed). */

@@ -26,21 +26,45 @@ android {
         applicationId = "com.qwer.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 907
-        versionName = "0.9.7"
+        versionCode = 908
+        versionName = "0.9.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Build a single-ABI APK with: ./gradlew :app:assembleRelease -PabiFilter=arm64-v8a
-        // Needed because hand-repacking a finished APK (removing lib/<abi> from the zip)
-        // produces an unaligned package with a compressed resources.arsc, which Android
-        // refuses to install. Gradle must do the packaging.
-        (project.findProperty("abiFilter") as String?)?.let { abis ->
-            ndk { abiFilters += abis.split(",").map { it.trim() } }
-        }
+        // ABIs shipped in the APK.
+        //
+        // WHY THE DEFAULT IS BOTH 64- AND 32-BIT:
+        // the released 0.9.x builds contained lib/arm64-v8a only, and Redmi 9 (MediaTek
+        // Helio G80) refused to install at all. Two separate causes are covered here:
+        //
+        //  1. Some Redmi 9 / 9A / 9C units ship a 32-bit Android build. Their
+        //     ro.product.cpu.abilist is "armeabi-v7a,armeabi" with no arm64 entry, so an
+        //     arm64-only APK has no matching native library and the installer rejects it
+        //     with INSTALL_FAILED_NO_MATCHING_ABIS.
+        //  2. Even on 64-bit units a single-ABI APK is fragile: the wdtt client
+        //     (libclient.so) must exist for the ABI the loader picks.
+        //
+        // Override for a single-ABI build: -PabiFilter=arm64-v8a
+        // Hand-repacking a finished APK instead of using this property is NOT supported:
+        // removing lib/<abi> from the zip afterwards breaks alignment and compression of
+        // resources.arsc, and Android then refuses the package.
+        val requestedAbis = (project.findProperty("abiFilter") as String?)
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?: listOf("arm64-v8a", "armeabi-v7a")
+
+        ndk { abiFilters += requestedAbis }
 
         // Domain used for verified App Links. Empty by default (custom scheme only).
         buildConfigField("String", "APP_LINK_HOST", "\"\"")
+
+        // Base URL of the bot's bundle endpoint (no trailing slash, no token).
+        // Empty by default: until the server side exists the app answers the deep link
+        // with an explicit "not configured" message instead of hanging on a dead host.
+        // Override at build time: -PbundleBaseUrl=https://bot.example.com/import
+        val bundleBaseUrl = (project.findProperty("bundleBaseUrl") as String?)?.trim().orEmpty()
+        buildConfigField("String", "BUNDLE_BASE_URL", "\"$bundleBaseUrl\"")
     }
 
     signingConfigs {

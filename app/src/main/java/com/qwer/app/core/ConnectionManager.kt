@@ -84,6 +84,9 @@ class ConnectionManager(
     /** Bounded recovery attempts since the last healthy connection. */
     private var recoveryAttempt = 0
 
+    /** Last time the tunnel was rebuilt because the transport changed. */
+    private var lastNetworkRestartAt: Long = 0L
+
     /** Last successfully read engine counters, used when a sample is unreadable. */
     private var lastCounters = com.qwer.app.engine.TunnelEngine.Counters(0, 0)
 
@@ -180,6 +183,28 @@ class ConnectionManager(
         }
         Diagnostics.event(Event.SLEEP_RECOVERY, "trigger" to trigger.name)
 
+        /*
+         * A REAL TRANSPORT CHANGE NEEDS A NEW TUNNEL, NOT A PROBE.
+         *
+         * The userspace WireGuard socket is bound to the address of the network it was
+         * created on. When the device moves from Wi-Fi to cellular (or between cells
+         * with a new IP), the kernel keeps sending on that dead path: the tunnel still
+         * reports "up", counters stop moving, and every probe times out. A probe cannot
+         * fix that, and neither can keepalive — the packets go nowhere.
+         *
+         * The only reliable recovery is to tear the tunnel down and bring it up again so
+         * the socket is created on the new default network. That is what this branch
+         * does, and it is why roaming used to leave a "hung" tunnel.
+         *
+         * It is rate-limited by [MIN_RESTART_INTERVAL_MS] because carriers emit several
+         * transport changes during one handover; restarting on each would thrash the
+         * engine instead of healing it.
+         */
+        if (trigger == NetworkLifecycleMonitor.Trigger.NETWORK_CHANGED) {
+            forceRestartOnNetworkChange()
+            return
+        }
+
         val ok = withContext(Dispatchers.IO) { probe.probe() }
         if (ok) {
             recoveryAttempt = 0
@@ -207,6 +232,43 @@ class ConnectionManager(
         }
         } finally {
             recoveryMutex.unlock()
+        }
+    }
+
+    /**
+     * Rebuilds the tunnel after a genuine transport change.
+     *
+     * Runs OUTSIDE [recoveryMutex] for the restart itself: connectInternal takes [mutex],
+     * and holding both would deadlock against a concurrent user action.
+     */
+    private suspend fun forceRestartOnNetworkChange() {
+        val profile = activeProfile ?: return
+        val now = clock()
+        if (now - lastNetworkRestartAt < MIN_RESTART_INTERVAL_MS) {
+            Diagnostics.event(
+                Event.SLEEP_RECOVERY,
+                "stage" to "restart_skipped",
+                "why" to "cooldown",
+                "since_ms" to (now - lastNetworkRestartAt),
+            )
+            return
+        }
+        lastNetworkRestartAt = now
+        Diagnostics.event(
+            Event.SLEEP_RECOVERY,
+            "stage" to "restart_on_network_change",
+            "protocol" to profile.protocol,
+        )
+        // Release the guard before touching [mutex]; connectInternal needs it.
+        recoveryMutex.unlock()
+        try {
+            mutex.withLock { stopTunnelLocked("network-change") }
+            recoveryAttempt = 0
+            lifecycle.cancelRetry()
+            connectInternal(profile.id)
+        } finally {
+            // Re-acquire so the caller's `finally { unlock() }` stays balanced.
+            recoveryMutex.lock()
         }
     }
 
@@ -746,6 +808,15 @@ class ConnectionManager(
 
         /** Recovery is bounded: after this many failed attempts we stop and report. */
         const val MAX_RECOVERY_ATTEMPTS = 6
+
+        /**
+         * Minimum gap between forced restarts caused by network changes.
+         *
+         * A single Wi-Fi -> cellular handover can emit three or four transport changes
+         * within ten seconds. Restarting on each would tear down a tunnel that is still
+         * being established, so only the first one acts and the rest are logged.
+         */
+        const val MIN_RESTART_INTERVAL_MS = 15_000L
 
         /** Traffic UI refresh; 2 s is smooth enough and cheap enough for battery. */
         const val TRAFFIC_INTERVAL_MS = 2_000L

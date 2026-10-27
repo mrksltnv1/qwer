@@ -46,6 +46,7 @@ import com.qwer.app.core.ConnectionState
 import com.qwer.app.core.AppRouting
 import com.qwer.app.core.VpnProfile
 import com.qwer.app.deeplink.DeepLinkHandler
+import com.qwer.app.imports.BundleImporter
 import com.qwer.app.device.DiagnosticEngine
 import com.qwer.app.device.InstalledApps
 import com.qwer.app.device.DiagnosticReport
@@ -852,13 +853,89 @@ class MainActivity : ComponentActivity() {
 
         when (val result = DeepLinkHandler.parse(intent)) {
             is DeepLinkHandler.Result.ImportRequest -> {
-                message = "Ссылка принята (${DeepLinkHandler.hint(result.token)}). " +
-                    "Сервер выдачи конфигураций не настроен — импорт не выполнен."
-                Diagnostics.event(Event.DEEPLINK_RECEIVED, "stage" to "awaiting_server")
+                // The token is opaque and single-use; only its hash prefix is logged.
+                Diagnostics.event(
+                    Event.DEEPLINK_RECEIVED,
+                    "stage" to "bundle_start",
+                    "hint" to DeepLinkHandler.hint(result.token),
+                )
+                lifecycleScope.launch { importBundle(result.token) }
             }
             is DeepLinkHandler.Result.Rejected -> message = result.reason
             DeepLinkHandler.Result.NotOurs -> Unit
         }
+    }
+
+    /**
+     * Fetches every profile the bot holds for this user and adds them in one write.
+     *
+     * Runs off the main thread: the request plus engine-side validation can take a
+     * second on a bad link. The result is reported through the same [message] surface
+     * the rest of the screen uses, so the user always learns what happened.
+     */
+    private suspend fun importBundle(token: String) {
+        val base = BuildConfig.BUNDLE_BASE_URL
+        if (base.isBlank()) {
+            // Fail loudly instead of hanging: without a configured server the link can
+            // never work, and a silent no-op would look like a broken feature.
+            message = "Сервер выдачи конфигураций не настроен в этой сборке"
+            Diagnostics.event(Event.DEEPLINK_RECEIVED, "stage" to "no_bundle_url")
+            return
+        }
+
+        val result = withContext(Dispatchers.IO) { BundleImporter.fetch(base, token) }
+        when (result) {
+            is BundleImporter.Result.Ok -> {
+                // Build profiles first, then write once: a partially applied bundle
+                // leaves the user unable to tell which tunnels are missing.
+                val profiles = result.entries.map { entry ->
+                    VpnProfile(
+                        name = entry.name,
+                        protocol = entry.protocol,
+                        endpointSummary = endpointOf(entry.config),
+                    )
+                }
+                val configs = profiles.mapIndexed { i, p -> p.id to result.entries[i].config }.toMap()
+                val added = app.repository.addAll(profiles, configs)
+                refreshProfiles()
+                message = when {
+                    added.isEmpty() -> "Все конфигурации уже добавлены"
+                    added.size == 1 -> "Добавлена 1 конфигурация"
+                    else -> "Добавлено конфигураций: ${added.size}"
+                }
+                Diagnostics.event(
+                    Event.DEEPLINK_RECEIVED,
+                    "stage" to "bundle_ok",
+                    "added" to added.size,
+                    "total" to result.entries.size,
+                )
+            }
+            is BundleImporter.Result.Empty -> {
+                message = result.reason
+                Diagnostics.event(
+                    Event.DEEPLINK_REJECTED,
+                    "stage" to "bundle_empty",
+                    "skipped" to result.skipped.size,
+                )
+            }
+            is BundleImporter.Result.Failed -> {
+                message = result.reason
+                Diagnostics.event(Event.DEEPLINK_REJECTED, "stage" to "bundle_failed")
+            }
+        }
+    }
+
+    /** Non-secret summary for the profile row; the full config stays in the Keystore. */
+    private fun endpointOf(config: String): String? {
+        val wdtt = WdttLink.extractLink(config)
+        if (wdtt != null) {
+            return (WdttLink.parse(wdtt) as? WdttParseResult.Valid)?.link?.safeLabel()
+        }
+        return config.lineSequence()
+            .firstOrNull { it.trim().startsWith("Endpoint", ignoreCase = true) }
+            ?.substringAfter('=', "")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
     }
 
     private suspend fun importFromUri(uri: Uri) {
