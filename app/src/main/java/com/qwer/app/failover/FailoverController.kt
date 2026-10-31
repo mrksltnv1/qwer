@@ -55,8 +55,18 @@ sealed interface FailoverDecision {
     data object None : FailoverDecision
     /** Sustained failure confirmed; switch the active tunnel to the failover profile. */
     data class SwitchTo(val target: Protocol, val reason: String) : FailoverDecision
-    /** Automatic switching is exhausted; surface this to the user. */
-    data class GiveUp(val reason: String) : FailoverDecision
+    /**
+     * Sustained failure confirmed, but there is no better tunnel to switch to: the
+     * fallback is not configured, it is the one already running, or the automatic-switch
+     * budget is spent.
+     *
+     * NOT terminal. A tunnel the user never turned off has to come back on its own, so
+     * the caller rebuilds the same profile on a capped ladder until the user disconnects.
+     * The old terminal `GiveUp` is exactly what left the field device dead for 14 minutes
+     * with `FAILOVER_EXHAUSTED why=Резервный профиль WDTT Plus не настроен` while WDTT
+     * Plus was the tunnel that was actually running.
+     */
+    data class Retry(val reason: String) : FailoverDecision
 }
 
 /**
@@ -105,6 +115,15 @@ class FailoverController(
     fun failureWindowElapsedMillis(nowMillis: Long): Long =
         failureStartedAt?.let { nowMillis - it } ?: 0
 
+    /**
+     * Clears the accumulation so a retry decision is emitted once per window instead of
+     * on every probe while the same outage continues.
+     */
+    private fun resetFailureWindow() {
+        failureStartedAt = null
+        consecutiveFailures = 0
+    }
+
     fun evaluate(sample: HealthSample, currentProtocol: Protocol, failoverTarget: Protocol?): FailoverDecision {
         // Rule 3: a missing physical uplink is not the tunnel's fault.
         if (!sample.physicalNetworkAvailable) {
@@ -147,16 +166,39 @@ class FailoverController(
             return FailoverDecision.None
         }
 
-        // Rule 6: budget.
-        if (autoSwitches >= config.maxAutoSwitches) {
-            return FailoverDecision.GiveUp(
-                "Автопереключение остановлено: $autoSwitches попыток подряд без стабильной связи"
+        /*
+         * NO ALTERNATIVE MEANS "REBUILD THIS TUNNEL", NOT "GIVE UP".
+         *
+         * The field log of 2026-10-31 22:44:51-22:45:04 is the whole failure story:
+         *
+         *   PROBE_RESULT ok=false fails=1  ...  fails=4
+         *   FAILOVER_EXHAUSTED why=Резервный профиль WDTT Plus не настроен
+         *   FOREGROUND_SERVICE stage=stopping / destroyed / stopped
+         *
+         * The active profile WAS WDTT Plus. Announcing that "the fallback WDTT profile is
+         * not configured" while WDTT is the tunnel in use is a dead end: there is nowhere
+         * to switch, so the only correct action is to rebuild the tunnel that is already
+         * selected. Instead the monitor broke out of its loop, the FGS was torn down, and
+         * the tunnel stayed dead for the remaining 14 minutes of the log until the user
+         * touched the phone. That is the reported "подключается 2-3 раза, а потом всё".
+         *
+         * The switch budget has the same flaw: it exists to stop WG -> WDTT -> WG
+         * oscillation, not to leave the user on a dead tunnel. Both cases now return
+         * [FailoverDecision.Retry] and the caller keeps healing.
+         */
+        if (failoverTarget == null || failoverTarget == currentProtocol) {
+            resetFailureWindow()
+            return FailoverDecision.Retry(
+                "резервный профиль не настроен — переподключаем текущий"
             )
         }
 
-        // No usable target configured.
-        if (failoverTarget == null || failoverTarget == currentProtocol) {
-            return FailoverDecision.GiveUp("Резервный профиль WDTT Plus не настроен")
+        // Rule 6: budget.
+        if (autoSwitches >= config.maxAutoSwitches) {
+            resetFailureWindow()
+            return FailoverDecision.Retry(
+                "бюджет автопереключений исчерпан ($autoSwitches) — переподключаем текущий"
+            )
         }
 
         val stagnation = lastTrafficChangeAt != Long.MIN_VALUE &&

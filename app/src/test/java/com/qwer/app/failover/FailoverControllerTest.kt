@@ -178,7 +178,10 @@ class FailoverControllerTest {
         }
         val switches = results.count { it is FailoverDecision.SwitchTo }
         assertEquals("expected exactly maxAutoSwitches switches", config.maxAutoSwitches, switches)
-        assertTrue("expected GiveUp after budget exhausted", results.last() is FailoverDecision.GiveUp)
+        assertTrue(
+            "expected Retry (not a dead end) after budget exhausted",
+            results.last() is FailoverDecision.Retry,
+        )
     }
 
     @Test
@@ -208,12 +211,28 @@ class FailoverControllerTest {
         assertTrue("expected SwitchTo after budget refill, got $d", d is FailoverDecision.SwitchTo)
     }
 
+    /**
+     * FIELD REGRESSION, 2026-10-31 22:45:04.
+     *
+     * The active profile was the only profile, so there was no fallback to switch to.
+     * The controller answered "Резервный профиль WDTT Plus не настроен", the monitor
+     * treated that as terminal, the foreground service went down and the tunnel stayed
+     * dead until the user noticed. The tunnel must be rebuilt instead.
+     */
     @Test
-    fun `missing failover target gives up instead of switching`() {
+    fun `missing failover target retries the current profile instead of giving up`() {
         val c = FailoverController(config)
         c.onConnected(0)
-        val last = sustainedFailure(c, start = 2_500, count = 6, to = null).last().second
-        assertTrue("expected GiveUp, got $last", last is FailoverDecision.GiveUp)
+        val decisions = sustainedFailure(c, start = 2_500, count = 6, to = null)
+        val last = decisions.last().second
+        assertTrue("expected Retry, got $last", last is FailoverDecision.Retry)
+        assertTrue(
+            "reason must explain that the same profile is being rebuilt",
+            (last as FailoverDecision.Retry).reason.contains("текущий"),
+        )
+        // Exactly one decision: the window is reset so the caller is not spammed on
+        // every subsequent probe while the same outage continues.
+        assertEquals(1, decisions.count { it.second is FailoverDecision.Retry })
     }
 
     @Test
@@ -227,7 +246,59 @@ class FailoverControllerTest {
             from = Protocol.WDTT_PLUS,
             to = Protocol.WDTT_PLUS,
         ).last().second
-        assertTrue("expected GiveUp, got $last", last is FailoverDecision.GiveUp)
+        assertTrue(
+            "same protocol is not a switch target, but must not be a dead end either",
+            last is FailoverDecision.Retry,
+        )
+    }
+
+    /**
+     * Replays the exact field sequence of 2026-10-31 22:44:51-22:45:04: four failed
+     * probes on the WDTT profile with two profiles imported but none flagged as a
+     * fallback. Before the fix this produced a terminal FAILOVER_EXHAUSTED.
+     */
+    @Test
+    fun `field log replay - wdtt only profile never ends in a dead end`() {
+        val c = FailoverController(config)
+        val connectedAt = 21_000_000L
+        c.onConnected(connectedAt)
+        // Probes run every 2.5 s; the log's one-line-per-minute heartbeat hides that.
+        val failedAts = (0 until 6).map { 22_445_100L + it * 2_500L }
+        val decisions = failedAts.map { t ->
+            c.evaluate(
+                HealthSample(t, probeOk = false, physicalNetworkAvailable = true, rxBytes = 0, txBytes = 0),
+                currentProtocol = Protocol.WDTT_PLUS,
+                failoverTarget = null,
+            )
+        }
+        // The window is 12 s, so only the last sample is late enough to act — and the
+        // action is a rebuild, never "give up".
+        assertTrue(
+            "no decision may be terminal: $decisions",
+            decisions.none { it is FailoverDecision.SwitchTo },
+        )
+        assertTrue(
+            "the tunnel must be rebuilt on its own: $decisions",
+            decisions.last() is FailoverDecision.Retry,
+        )
+    }
+
+    /**
+     * The budget must still cap WG -> WDTT oscillation, but spending it is not a reason
+     * to leave a live user with a dead tunnel.
+     */
+    @Test
+    fun `exhausted budget retries the current profile instead of dying`() {
+        val c = FailoverController(config)
+        var roundStart = 0L
+        repeat(config.maxAutoSwitches) {
+            c.onConnected(roundStart)
+            sustainedFailure(c, start = roundStart + 2_500, count = 6)
+            roundStart += 90_000
+        }
+        c.onConnected(roundStart)
+        val last = sustainedFailure(c, start = roundStart + 2_500, count = 6).last().second
+        assertTrue("expected Retry after the budget, got $last", last is FailoverDecision.Retry)
     }
 
     @Test
